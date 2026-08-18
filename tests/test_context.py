@@ -37,3 +37,29 @@ def test_feature_epic_versus_support_epic():
     assert is_feature_epic(story, PROFILE) is False
     assert is_support_epic(support, PROFILE) is True
     assert is_support_epic(feature, PROFILE) is False
+
+
+def test_dangling_parent_reference():
+    """Проверяет, что элемент с несуществующим родителем не вызывает исключение.
+
+    Элемент, чей parent указывает на несуществующий id, должен:
+    - остаться в items
+    - получить пустой список детей в children
+    - не создавать запись для несуществующего parent в children
+    """
+    # Элемент со ссылкой на несуществующий parent
+    story_with_missing_parent = item("S-1", parent="MISSING-PARENT")
+    ctx = build_context([story_with_missing_parent], PROFILE, NOW)
+
+    # (a) build_context не выбросил исключение
+    assert True
+
+    # (b) элемент присутствует в ctx.items
+    assert "S-1" in ctx.items
+    assert ctx.items["S-1"].id == "S-1"
+
+    # (c) ctx.children содержит пустой список для элемента
+    assert ctx.children["S-1"] == []
+
+    # (d) ключ для несуществующего parent не был создан в ctx.children
+    assert "MISSING-PARENT" not in ctx.children
