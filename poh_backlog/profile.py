@@ -9,7 +9,9 @@ import yaml
 
 
 class ProfileError(Exception):
-    """Битый профиль, неизвестный ключ или обращение к несуществующему пути."""
+    """Неизвестный ключ профиля, несовпадение типа с дефолтом или обращение
+    к несуществующему пути. Синтаксически некорректный YAML сюда не входит —
+    он падает как yaml.YAMLError ещё на этапе разбора файла."""
 
 
 @dataclass(frozen=True)
@@ -31,8 +33,16 @@ def _merge(defaults: dict, override: dict, prefix: str = "") -> dict:
         path = f"{prefix}{key}"
         if key not in defaults:
             raise ProfileError(f"Неизвестный ключ профиля: {path}")
-        if isinstance(defaults[key], dict) and isinstance(value, dict):
+        default_is_dict = isinstance(defaults[key], dict)
+        value_is_dict = isinstance(value, dict)
+        if default_is_dict and value_is_dict:
             merged[key] = _merge(defaults[key], value, prefix=f"{path}.")
+        elif default_is_dict != value_is_dict:
+            raise ProfileError(
+                f"Несовпадение типа для ключа профиля: {path} "
+                f"(дефолт: {type(defaults[key]).__name__}, "
+                f"переопределение: {type(value).__name__})"
+            )
         else:
             merged[key] = value
     return merged
