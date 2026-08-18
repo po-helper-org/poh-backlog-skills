@@ -1,0 +1,18 @@
+# Доменный профиль. Скопировать в рабочее пространство как backlog-profile.yaml
+# и переопределить только то, что отличается от дефолтов rules/thresholds.yaml.
+# Неизвестный ключ — ошибка, а не молчание.
+
+# staleness:
+#   story_days: 90
+
+# description:
+#   min_words: 30
+
+# phases:
+#   support_label: support
+
+# plan:
+#   max_actions_per_run: 25
+
+# Маппинг полей трекера. Используется host-агентом при сборе items.json.
+mapping: mappings/github.yaml
