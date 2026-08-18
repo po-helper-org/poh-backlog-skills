@@ -1,0 +1,22 @@
+[project]
+name = "poh-backlog-skills"
+version = "0.1.0"
+description = "Решающий слой гигиены беклога: правила, вердикты, план, память"
+requires-python = ">=3.11"
+dependencies = ["PyYAML>=6.0", "jsonschema>=4.0"]
+
+[project.scripts]
+poh-backlog = "poh_backlog.cli:main"
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "pytest-cov>=5.0"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["poh_backlog"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

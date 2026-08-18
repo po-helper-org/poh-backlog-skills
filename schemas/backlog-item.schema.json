@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "BacklogItem",
+  "type": "object",
+  "required": ["id", "type", "title", "status", "created_at", "updated_at"],
+  "properties": {
+    "id": {"type": "string"},
+    "type": {"enum": ["initiative", "epic", "story", "bug", "task"]},
+    "title": {"type": "string"},
+    "description": {"type": ["string", "null"]},
+    "status": {"enum": ["open", "closed"]},
+    "created_at": {"type": "string"},
+    "updated_at": {"type": "string"},
+    "labels": {"type": "array", "items": {"type": "string"}},
+    "parent": {"type": ["string", "null"]},
+    "estimate": {"type": ["number", "null"]},
+    "extra": {"type": "object"}
+  },
+  "additionalProperties": false
+}
