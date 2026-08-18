@@ -1,0 +1,149 @@
+# Каталог правил гигиены беклога. Данные, не код.
+# rule_id стабилен и сквозной: finding -> план -> комментарий трекера -> снимок.
+
+- id: HYG-STALE-001
+  title: Элемент без активности дольше порога
+  bucket: close
+  kind: deterministic
+  severity: medium
+  threshold: staleness.story_days
+  action: propose_close
+  expected_effect: "item has label 'stale' and comment with rule_id"
+  maturity: experimental
+  rationale: Возраст без активности и без связанной работы означает кандидата на закрытие
+  source: "backlog health: менее 20% элементов старше 90 дней, менее 5% старше 180"
+
+- id: HYG-DESC-002
+  title: Описание короче порога
+  bucket: update
+  kind: deterministic
+  severity: medium
+  threshold: description.min_words
+  action: update_field
+  expected_effect: "item description word count >= threshold"
+  maturity: experimental
+  rationale: Минимальный контекст делает задачу неоценимой и неисполнимой
+  source: "замер 727 задач: ~40% короче 20 слов, ~27% без описания вовсе"
+
+- id: HYG-EST-003
+  title: История без оценки
+  bucket: update
+  kind: deterministic
+  severity: low
+  threshold: null
+  action: update_field
+  expected_effect: "item estimate is not null"
+  maturity: experimental
+  rationale: Элемент без оценки не проходит Definition of Ready
+  source: "DEEP: estimated"
+
+- id: HYG-ORPHAN-004
+  title: История без родителя
+  bucket: link
+  kind: deterministic
+  severity: medium
+  threshold: null
+  action: relink
+  expected_effect: "item parent is not null"
+  maturity: experimental
+  rationale: Сирота не видна в иерархии и выпадает из планирования
+  source: "Advanced Roadmaps: отчёт orphan issues"
+
+- id: PHS-TAG-001
+  title: История в эпике фичи без ровно одного тега фазы
+  bucket: update
+  kind: deterministic
+  severity: high
+  threshold: null
+  action: update_field
+  expected_effect: "item has exactly one of mvp/grow labels"
+  maturity: experimental
+  rationale: Без тега невозможно отличить сутевую часть от Grow-хвоста
+  source: "раздел 5 спеки"
+
+- id: PHS-EPIC-002
+  title: Эпик фичи без обязательных атрибутов
+  bucket: update
+  kind: deterministic
+  severity: high
+  threshold: phases.required_epic_fields
+  action: update_field
+  expected_effect: "epic has business_metric, due_date, how_to_demo, limitations"
+  maturity: experimental
+  rationale: Без бизнес-метрики, срока, HowToDemo и списка ограничений эпик не готов к старту
+  source: "раздел 5 спеки"
+
+- id: PHS-MVP-003
+  title: MVP-история не нужна для прохождения HowToDemo
+  bucket: update
+  kind: judgment
+  severity: high
+  threshold: null
+  action: update_field
+  expected_effect: "item label mvp replaced by grow"
+  maturity: experimental
+  prompt: prompts/mvp_necessity.md
+  rationale: HowToDemo делает принадлежность к MVP проверяемой, а не вкусовой
+  source: "раздел 5.1 спеки"
+
+- id: PHS-LIMIT-004
+  title: Ограничение MVP без Grow-истории и без явного принятия
+  bucket: split
+  kind: judgment
+  severity: high
+  threshold: null
+  action: split
+  expected_effect: "limitation has linked grow story or accepted marker"
+  maturity: experimental
+  prompt: prompts/limitation_coverage.md
+  rationale: Необращённое ограничение — техдолг, которого нет ни в одном списке
+  source: "раздел 5.1 спеки"
+
+- id: PHS-GROW-005
+  title: Эпик фичи закрыт при открытых Grow-историях
+  bucket: update
+  kind: deterministic
+  severity: high
+  threshold: null
+  action: update_field
+  expected_effect: "epic reopened or grow children moved"
+  maturity: experimental
+  rationale: Закрытие эпика с открытым хвостом прячет незавершённую работу
+  source: "раздел 5.1 спеки"
+
+- id: PHS-SUP-006
+  title: Задача поддержки живёт в эпике фичи
+  bucket: link
+  kind: judgment
+  severity: medium
+  threshold: null
+  action: relink
+  expected_effect: "item parent is the support epic of the initiative"
+  maturity: experimental
+  prompt: prompts/support_leak.md
+  rationale: Утечка Support раздувает конечный эпик и ломает его сроки
+  source: "раздел 5.1 спеки"
+
+- id: PHS-SUP-007
+  title: У инициативы не ровно один Support-эпик
+  bucket: link
+  kind: deterministic
+  severity: high
+  threshold: phases.support_label
+  action: relink
+  expected_effect: "initiative has exactly one open support epic"
+  maturity: experimental
+  rationale: Support-эпик один на бизнес-инициативу и не закрывается
+  source: "раздел 5.1 спеки"
+
+- id: PHS-DRIFT-008
+  title: Перевод истории grow в mvp без обоснования
+  bucket: update
+  kind: deterministic
+  severity: high
+  threshold: null
+  action: comment
+  expected_effect: "item has comment explaining phase change"
+  maturity: experimental
+  rationale: Тег переставляется незаметно, дрейф виден только на диффе снимков
+  source: "раздел 5 спеки"
