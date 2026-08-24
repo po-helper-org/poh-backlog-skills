@@ -121,3 +121,39 @@ def test_append_decisions_twice_round_trips_and_leaves_no_temp_file(tmp_path):
     entries = yaml.safe_load(path.read_text(encoding="utf-8"))
     assert [e["rule_id"] for e in entries] == ["A", "B"]
     assert [p.name for p in path.parent.iterdir()] == ["decisions.yaml"]
+
+
+def test_load_latest_snapshot_raises_state_error_on_invalid_utf8(tmp_path):
+    state_dir = write_state(tmp_path, "2026-08-18-01", {"items": {}}, [], {}, [])
+    (state_dir / "items.snapshot.json").write_bytes(b"\xff\xfe")
+    with pytest.raises(StateError) as excinfo:
+        load_latest_snapshot(tmp_path)
+    assert str(state_dir / "items.snapshot.json") in str(excinfo.value)
+
+
+def test_load_latest_findings_count_raises_state_error_on_invalid_utf8(tmp_path):
+    state_dir = write_state(tmp_path, "2026-08-18-01", {"items": {}}, [], {}, [])
+    (state_dir / "findings.json").write_bytes(b"\xff\xfe")
+    with pytest.raises(StateError) as excinfo:
+        load_latest_findings_count(tmp_path)
+    assert str(state_dir / "findings.json") in str(excinfo.value)
+
+
+def test_append_decisions_raises_decisions_error_on_invalid_utf8(tmp_path):
+    path = tmp_path / "decisions.yaml"
+    path.write_bytes(b"\xff\xfe")
+    with pytest.raises(DecisionsError) as excinfo:
+        append_decisions(path, [{"rule_id": "A", "item": "S-1",
+                                 "verdict": "rejected", "reason": "r",
+                                 "suppress_until": "forever"}])
+    assert str(path) in str(excinfo.value)
+
+
+def test_append_decisions_raises_decisions_error_when_content_is_falsy_scalar(tmp_path):
+    path = tmp_path / "decisions.yaml"
+    path.write_text("0\n", encoding="utf-8")
+    with pytest.raises(DecisionsError) as excinfo:
+        append_decisions(path, [{"rule_id": "A", "item": "S-1",
+                                 "verdict": "rejected", "reason": "r",
+                                 "suppress_until": "forever"}])
+    assert str(path) in str(excinfo.value)

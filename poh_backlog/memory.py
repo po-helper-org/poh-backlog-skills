@@ -81,7 +81,7 @@ def _load_latest_json(root: Path, filename: str):
     latest = runs[-1] / filename
     try:
         text = latest.read_text(encoding="utf-8")
-    except OSError as exc:
+    except (OSError, UnicodeDecodeError) as exc:
         raise StateError(
             f"не удалось прочитать файл последнего прогона: {latest}"
         ) from exc
@@ -139,18 +139,25 @@ def append_decisions(path: Path, entries: list[dict]) -> None:
     path = Path(path)
     existing: list = []
     if path.exists():
-        text = path.read_text(encoding="utf-8")
         try:
+            text = path.read_text(encoding="utf-8")
             raw = yaml.safe_load(text)
+        except (OSError, UnicodeDecodeError) as exc:
+            raise DecisionsError(
+                f"не удалось прочитать decisions.yaml: {path}"
+            ) from exc
         except yaml.YAMLError as exc:
             raise DecisionsError(
                 f"decisions.yaml повреждён (некорректный YAML): {path}"
             ) from exc
-        existing = raw or []
-        if not isinstance(existing, list):
+        if raw is None:
+            existing = []
+        elif isinstance(raw, list):
+            existing = raw
+        else:
             raise DecisionsError(
                 f"decisions.yaml должен быть списком записей, а не "
-                f"{type(existing).__name__}: {path}"
+                f"{type(raw).__name__}: {path}"
             )
     existing.extend(entries)
     _atomic_write(path, yaml.safe_dump(existing, allow_unicode=True, sort_keys=False))
