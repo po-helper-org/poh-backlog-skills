@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+import re
 from dataclasses import asdict, dataclass, field
 
 from poh_backlog.catalog import ACTIONS as ALLOWED_OPS
@@ -39,6 +40,20 @@ class Plan:
 def _action_key(rule_id: str, item_id: str, revision: str) -> str:
     digest = hashlib.sha256(f"{rule_id}|{item_id}|{revision}".encode("utf-8"))
     return digest.hexdigest()[:16]
+
+
+def _single_line(text: str) -> str:
+    """Схлопывает любые пробельные последовательности (включая переносы строк)
+    в единичный пробел и обрезает края.
+
+    Это чисто визуальная нормализация для рендера строки чекбокса в plan.md:
+    исходное значение (например, `Action.rationale`) не меняется, меняется
+    только то, что попадает в текст `plan.md`. Без этого перенос строки или
+    последовательность вида `- [ ] ` внутри rationale могла бы разорвать
+    действие на отдельную строку, которая выглядит как ещё один чекбокс, но не
+    несёт валидного `action_key`.
+    """
+    return re.sub(r"\s+", " ", text).strip()
 
 
 def build_plan(findings: list[Finding], catalog: dict[str, RuleSpec],
@@ -86,7 +101,7 @@ def render_plan_md(plan: Plan, run_id: str) -> str:
         for action in bucket_actions:
             lines.append(
                 f"- [ ] `{action.action_key}` **{action.rule_id}** "
-                f"{action.item_id} — {action.op} — {action.rationale}"
+                f"{action.item_id} — {action.op} — {_single_line(action.rationale)}"
             )
         lines.append("")
 

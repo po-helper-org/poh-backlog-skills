@@ -15,9 +15,10 @@ def item(id_, updated="2026-08-01T00:00:00+00:00"):
     })
 
 
-def finding(rule_id="HYG-STALE-001", item_id="S-1", severity="medium"):
+def finding(rule_id="HYG-STALE-001", item_id="S-1", severity="medium",
+            message="Нет активности 200 дней"):
     return Finding(rule_id=rule_id, item_id=item_id, bucket="close",
-                   severity=severity, message="Нет активности 200 дней", evidence={})
+                   severity=severity, message=message, evidence={})
 
 
 def test_action_key_is_stable_for_same_revision():
@@ -73,3 +74,45 @@ def test_plan_to_dict_round_trips_keys():
     assert set(data) == {"actions", "deferred"}
     assert set(data["actions"][0]) == {"action_key", "rule_id", "item_id", "bucket",
                                        "op", "rationale", "expected_effect"}
+
+
+def _checkbox_lines(text: str) -> list[str]:
+    return [line for line in text.splitlines() if line.startswith("- [ ] ")]
+
+
+def test_rationale_with_embedded_newline_renders_as_single_line():
+    findings = [finding(message="Первая строка\nВторая строка", item_id="S-1"),
+                finding(rule_id="PHS-TAG-001", message="Обычный текст", item_id="S-2")]
+    items = {"S-1": item("S-1"), "S-2": item("S-2")}
+    plan = build_plan(findings, CATALOG, items, max_actions=50)
+    text = render_plan_md(plan, run_id="2026-08-18-01")
+    assert "Первая строка\nВторая строка" not in text
+    assert "Первая строка Вторая строка" in text
+    assert len(_checkbox_lines(text)) == len(plan.actions)
+
+
+def test_rationale_with_checkbox_like_text_produces_no_extra_checkbox_line():
+    findings = [finding(message="см. предыдущий пункт\n- [ ] нет активности", item_id="S-1")]
+    items = {"S-1": item("S-1")}
+    plan = build_plan(findings, CATALOG, items, max_actions=50)
+    text = render_plan_md(plan, run_id="2026-08-18-01")
+    assert len(_checkbox_lines(text)) == len(plan.actions)
+
+
+def test_plan_to_dict_keeps_original_rationale_with_newline():
+    findings = [finding(message="Первая строка\nВторая строка", item_id="S-1")]
+    items = {"S-1": item("S-1")}
+    plan = build_plan(findings, CATALOG, items, max_actions=50)
+    data = plan_to_dict(plan)
+    assert data["actions"][0]["rationale"] == "Первая строка\nВторая строка"
+
+
+def test_deferred_section_lists_each_deferred_item_and_rule():
+    findings = [finding(item_id=f"S-{i}") for i in range(5)]
+    items = {f"S-{i}": item(f"S-{i}") for i in range(5)}
+    plan = build_plan(findings, CATALOG, items, max_actions=2)
+    text = render_plan_md(plan, run_id="2026-08-18-01")
+    assert len(plan.deferred) >= 2
+    for action in plan.deferred:
+        assert action.item_id in text
+        assert action.rule_id in text
