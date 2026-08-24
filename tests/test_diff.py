@@ -63,6 +63,31 @@ def test_mvp_to_grow_not_flagged():
     assert detect_phase_drift(prev, now_items, PROFILE) == []
 
 
+def test_stale_marker_present_in_both_snapshots_still_flagged():
+    # Маркер уже стоял в описании до переноса — он обосновывал более раннее
+    # изменение, а не текущий переход grow -> mvp, поэтому находка обязана
+    # появиться снова.
+    prev = take_snapshot([item("S-1", labels=("grow",),
+                               description="[phase-change] старое обоснование")])
+    now_items = [item("S-1", labels=("mvp",),
+                      description="[phase-change] старое обоснование")]
+    findings = detect_phase_drift(prev, now_items, PROFILE)
+    assert len(findings) == 1
+    assert findings[0].rule_id == "PHS-DRIFT-008"
+    assert findings[0].evidence == {"from": "grow", "to": "mvp"}
+
+
+def test_missing_marker_key_in_prev_snapshot_treated_as_absent():
+    # Снимок, сделанный до появления этого поля, не содержит ключ вовсе —
+    # это должно трактоваться как "маркера не было", чтобы старые снимки
+    # продолжали работать без миграции.
+    prev = take_snapshot([item("S-1", labels=("grow",))])
+    del prev["items"]["S-1"]["phase_change_marker_present"]
+    now_items = [item("S-1", labels=("mvp",),
+                      description="[phase-change] новое обоснование")]
+    assert detect_phase_drift(prev, now_items, PROFILE) == []
+
+
 def test_report_md_contains_counts():
     report = DiffReport(added=["S-3"], removed=["S-2"], changed={"S-1": {}})
     text = render_report_md(report, findings_now=7, findings_prev=9)
@@ -70,3 +95,21 @@ def test_report_md_contains_counts():
     assert "Удалено: 1" in text
     assert "Изменено: 1" in text
     assert "9 -> 7" in text
+
+
+def test_report_md_changed_items_section_contains_id_and_field_names():
+    report = DiffReport(changed={"S-7": {
+        "estimate": {"from": 1.0, "to": 2.0},
+        "status": {"from": "open", "to": "done"},
+    }})
+    text = render_report_md(report, findings_now=0, findings_prev=0)
+    assert "## Изменённые элементы" in text
+    assert "S-7" in text
+    assert "estimate" in text
+    assert "status" in text
+
+
+def test_report_md_no_changed_items_omits_section_heading():
+    report = DiffReport()
+    text = render_report_md(report, findings_now=0, findings_prev=0)
+    assert "## Изменённые элементы" not in text

@@ -18,6 +18,11 @@ def take_snapshot(items: list[BacklogItem]) -> dict:
             "labels": list(item.labels),
             "estimate": item.estimate,
             "parent": item.parent,
+            # Служебное поле для PHS-DRIFT-008: было ли в описании
+            # обоснование [phase-change] на момент этого снимка. Не входит
+            # в TRACKED — это внутренняя бухгалтерия правила дрейфа фаз, а
+            # не отслеживаемое пользователем поле.
+            "phase_change_marker_present": DRIFT_MARKER in item.description,
         }
         for item in items
     }}
@@ -61,7 +66,16 @@ def detect_phase_drift(prev: dict | None, items: list[BacklogItem],
         now_mvp = mvp in item.labels
         if not (was_grow and now_mvp):
             continue
-        if DRIFT_MARKER in item.description:
+        # Маркер оправдывает только тот перенос, который он сопровождал:
+        # находка гасится, только если маркер появился именно сейчас — его
+        # не было в предыдущем снимке. Если он уже стоял там, он обосновывал
+        # более ранний перенос и не спасает от текущей находки. Снимок,
+        # сделанный до появления этого ключа, ключа не содержит — тогда
+        # `.get(..., False)` трактует отсутствие ключа как "маркера не было",
+        # что сохраняет обратную совместимость со старыми снимками.
+        marker_now = DRIFT_MARKER in item.description
+        marker_before = before.get("phase_change_marker_present", False)
+        if marker_now and not marker_before:
             continue
         findings.append(Finding(
             rule_id="PHS-DRIFT-008",
