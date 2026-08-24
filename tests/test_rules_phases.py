@@ -38,6 +38,7 @@ def test_story_in_feature_epic_without_phase_tag_flagged():
     findings = RULES["PHS-TAG-001"](story, ctx([epic, story]))
     assert len(findings) == 1
     assert findings[0].evidence["phase_tags"] == []
+    assert findings[0].message == "У истории нет тега фазы"
 
 
 def test_story_with_both_tags_flagged():
@@ -46,6 +47,7 @@ def test_story_with_both_tags_flagged():
     findings = RULES["PHS-TAG-001"](story, ctx([epic, story]))
     assert len(findings) == 1
     assert findings[0].evidence["phase_tags"] == ["mvp", "grow"]
+    assert findings[0].message == "У истории тегов фазы 2 вместо одного: mvp, grow"
 
 
 def test_story_with_one_tag_clean():

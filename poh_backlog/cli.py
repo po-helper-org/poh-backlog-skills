@@ -61,11 +61,11 @@ def cmd_run(args: argparse.Namespace) -> int:
 
     out = Path(args.out)
     _write(out / "findings.json",
-           json.dumps(findings_to_dicts(findings), ensure_ascii=False, indent=2))
+           json.dumps(findings_to_dicts(findings), ensure_ascii=False, indent=2) + "\n")
     _write(out / "report.md", render_report_md(diff, len(findings), prev_findings))
     _write(out / "plan.md", render_plan_md(plan, args.run_id))
     _write(out / "plan.json",
-           json.dumps(plan_to_dict(plan), ensure_ascii=False, indent=2))
+           json.dumps(plan_to_dict(plan), ensure_ascii=False, indent=2) + "\n")
 
     state_dir = write_state(Path(args.state), args.run_id, snapshot,
                             findings_to_dicts(findings), plan_to_dict(plan), [])
@@ -91,7 +91,7 @@ def cmd_approve(args: argparse.Namespace) -> int:
     result = split_by_approval(plan, plan_md, shadow=False)
     _write(out / "approved.json",
            json.dumps([asdict(a) for a in result.approved],
-                      ensure_ascii=False, indent=2))
+                      ensure_ascii=False, indent=2) + "\n")
     append_decisions(Path(args.decisions),
                      rejections_to_decisions(result.rejected,
                                              reason="снято человеком при апруве"))
@@ -132,3 +132,7 @@ def main(argv: list[str] | None = None) -> int:
         # запустившего это из cron, в сырой traceback.
         print(str(exc), file=sys.stderr)
         return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main())

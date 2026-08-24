@@ -125,3 +125,15 @@ def test_description_flagged_before_threshold():
     findings = RULES["HYG-DESC-002"](item_below_limit, ctx([item_below_limit]))
     assert len(findings) == 1
     assert findings[0].evidence["word_count"] == word_limit - 1
+
+
+def test_short_description_message_uses_correct_plural_for_one_word():
+    single = item("S-12", description="одно")
+    findings = RULES["HYG-DESC-002"](single, ctx([single]))
+    assert findings[0].message == "Описание из 1 слова при пороге 20"
+
+
+def test_short_description_message_uses_correct_plural_for_several_words():
+    two = item("S-13", description="два слова")
+    findings = RULES["HYG-DESC-002"](two, ctx([two]))
+    assert findings[0].message == "Описание из 2 слова при пороге 20"

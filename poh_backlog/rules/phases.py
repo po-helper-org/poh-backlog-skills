@@ -19,13 +19,16 @@ def exactly_one_phase_tag(item: BacklogItem, ctx: AuditContext) -> list[Finding]
     tags = list(item.phase_tags_for(phase_tag_names))
     if len(tags) == 1:
         return []
-    detail = ", ".join(tags) if tags else "нет ни одного"
+    if not tags:
+        message = "У истории нет тега фазы"
+    else:
+        message = f"У истории тегов фазы {len(tags)} вместо одного: {', '.join(tags)}"
     return [Finding(
         rule_id="PHS-TAG-001",
         item_id=item.id,
         bucket="update",
         severity="high",
-        message=f"Тегов фазы {len(tags)} вместо одного: {detail}",
+        message=message,
         evidence={"phase_tags": tags, "epic": parent.id},
     )]
 

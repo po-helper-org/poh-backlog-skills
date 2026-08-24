@@ -1,5 +1,7 @@
 import json
 import shutil
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -78,6 +80,37 @@ def test_approve_picks_checked_action(workspace, capsys):
     assert "Утверждено: 1" in capsys.readouterr().out
     actions = json.loads((workspace / "out" / "approved.json").read_text(encoding="utf-8"))
     assert len(actions) == 1
+
+
+def test_module_invocation_runs_main_and_shows_subcommands():
+    # Регрессия: `python3 -m poh_backlog.cli` без `if __name__ == "__main__"`
+    # молча выходит с кодом 0, ничего не делая. Человек без установленного
+    # пакета первым делом попробует `-m`, а не консольный скрипт.
+    result = subprocess.run(
+        [sys.executable, "-m", "poh_backlog.cli", "--help"],
+        capture_output=True, text=True, timeout=10,
+    )
+    assert result.returncode == 0
+    assert "run" in result.stdout
+    assert "approve" in result.stdout
+
+
+def test_findings_and_plan_json_end_with_trailing_newline(workspace):
+    run_cli(workspace, "--shadow")
+    out = workspace / "out"
+    for name in ("findings.json", "plan.json"):
+        assert (out / name).read_text(encoding="utf-8").endswith("\n")
+
+
+def test_approved_json_ends_with_trailing_newline(workspace):
+    run_cli(workspace, "--shadow")
+    plan_md = workspace / "out" / "plan.md"
+    text = plan_md.read_text(encoding="utf-8").replace("- [ ] ", "- [x] ", 1)
+    plan_md.write_text(text, encoding="utf-8")
+    main(["approve", "--out", str(workspace / "out"),
+          "--decisions", str(workspace / "decisions.yaml")])
+    approved = workspace / "out" / "approved.json"
+    assert approved.read_text(encoding="utf-8").endswith("\n")
 
 
 def test_corrupted_previous_snapshot_exits_with_code_2(workspace, capsys):

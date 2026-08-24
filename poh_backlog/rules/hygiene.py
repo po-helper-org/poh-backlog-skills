@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from poh_backlog.model import AuditContext, BacklogItem, Finding
 from poh_backlog.rules import rule
+from poh_backlog.text import ru_plural
 
 ESTIMATED_TYPES = ("story", "bug", "task")
 PARENTED_TYPES = ("story", "bug", "task")
@@ -35,12 +36,13 @@ def short_description(item: BacklogItem, ctx: AuditContext) -> list[Finding]:
     words = len(item.description.split())
     if words >= limit:
         return []
+    word_form = ru_plural(words, "слова", "слова", "слов")
     return [Finding(
         rule_id="HYG-DESC-002",
         item_id=item.id,
         bucket="update",
         severity="medium",
-        message=f"Описание из {words} слов при пороге {limit}",
+        message=f"Описание из {words} {word_form} при пороге {limit}",
         evidence={"word_count": words, "threshold_words": limit},
     )]
 
