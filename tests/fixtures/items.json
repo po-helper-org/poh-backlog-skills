@@ -1,0 +1,31 @@
+[
+  {
+    "id": "I-1", "type": "initiative", "title": "Импорт данных",
+    "description": "Бизнес-инициатива по загрузке внешних данных в продукт",
+    "status": "open",
+    "created_at": "2026-01-01T00:00:00+00:00",
+    "updated_at": "2026-08-10T00:00:00+00:00"
+  },
+  {
+    "id": "E-1", "type": "epic", "title": "CSV-импорт", "status": "open",
+    "description": "Эпик фичи с конечными границами и сроком",
+    "created_at": "2026-01-05T00:00:00+00:00",
+    "updated_at": "2026-08-10T00:00:00+00:00",
+    "parent": "I-1",
+    "extra": {"business_metric": "конверсия импорта +10%"}
+  },
+  {
+    "id": "S-1", "type": "story", "title": "Загрузка файла", "status": "open",
+    "description": "Пользователь выбирает CSV и видит предпросмотр первых строк перед подтверждением загрузки в систему",
+    "created_at": "2026-01-06T00:00:00+00:00",
+    "updated_at": "2026-01-06T00:00:00+00:00",
+    "parent": "E-1", "labels": ["mvp"], "estimate": 3.0
+  },
+  {
+    "id": "S-2", "type": "story", "title": "Валидация", "status": "open",
+    "description": "коротко",
+    "created_at": "2026-02-01T00:00:00+00:00",
+    "updated_at": "2026-08-15T00:00:00+00:00",
+    "parent": "E-1", "estimate": null
+  }
+]

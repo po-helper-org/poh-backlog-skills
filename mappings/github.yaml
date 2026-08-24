@@ -1,0 +1,24 @@
+# Маппинг GitHub Issues в каноническую модель.
+# Читает host-агент при сборке items.json. Пакет этот файл не исполняет.
+
+source: github
+fields:
+  id: "GH-{number}"
+  type: |
+    epic если на Issue есть метка 'epic';
+    initiative если есть метка 'initiative';
+    bug если есть метка 'bug';
+    иначе story
+  title: title
+  description: body
+  status: "open если state == 'open', иначе closed"
+  created_at: created_at
+  updated_at: updated_at
+  labels: "labels[].name"
+  parent: "номер родительской задачи из sub-issues, в формате GH-{number}"
+  estimate: "число из метки вида 'sp:3', иначе null"
+extra:
+  business_metric: "секция '## Бизнес-метрика' в теле Issue"
+  due_date: "milestone.due_on"
+  how_to_demo: "секция '## HowToDemo' в теле Issue"
+  limitations: "пункты списка из секции '## Ограничения'"
