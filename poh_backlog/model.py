@@ -38,9 +38,20 @@ class BacklogItem:
             extra=dict(raw.get("extra") or {}),
         )
 
+    def phase_tags_for(self, names: tuple[str, ...]) -> tuple[str, ...]:
+        """Возвращает метки элемента, входящие в переданный набор имён тегов
+        фазы, сохраняя порядок меток. Правила должны вызывать этот метод
+        с именами тегов из профиля команды (`phases.mvp_tag`, `phases.grow_tag`),
+        а не полагаться на дефолтные названия."""
+        return tuple(label for label in self.labels if label in names)
+
     @property
     def phase_tags(self) -> tuple[str, ...]:
-        return tuple(label for label in self.labels if label in PHASE_TAGS)
+        """Метки фазы по умолчанию (`PHASE_TAGS` = "mvp"/"grow"). Это
+        соглашение о названии по умолчанию: правила, учитывающие профиль
+        команды, обязаны передавать имена тегов из профиля явно через
+        `phase_tags_for`, а не полагаться на этот дефолт."""
+        return self.phase_tags_for(PHASE_TAGS)
 
     @property
     def is_open(self) -> bool:

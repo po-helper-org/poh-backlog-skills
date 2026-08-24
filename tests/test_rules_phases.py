@@ -54,6 +54,24 @@ def test_story_with_one_tag_clean():
     assert RULES["PHS-TAG-001"](story, ctx([epic, story])) == []
 
 
+def test_renamed_phase_tags_read_from_profile():
+    renamed_profile = Profile({"phases": {
+        "mvp_tag": "этап-mvp", "grow_tag": "этап-grow", "support_label": "support",
+        "required_epic_fields": ["business_metric", "due_date", "how_to_demo", "limitations"],
+    }})
+    epic = item("E-1", "epic", extra=FULL_EPIC_EXTRA)
+    renamed_story = item("S-1", parent="E-1", labels=("этап-mvp",))
+    literal_story = item("S-2", parent="E-1", labels=("mvp",))
+
+    renamed_ctx = build_context([epic, renamed_story, literal_story], renamed_profile, NOW)
+
+    assert RULES["PHS-TAG-001"](renamed_story, renamed_ctx) == []
+
+    findings = RULES["PHS-TAG-001"](literal_story, renamed_ctx)
+    assert len(findings) == 1
+    assert findings[0].evidence["phase_tags"] == []
+
+
 def test_story_in_support_epic_not_required_to_have_phase_tag():
     support = item("E-2", "epic", labels=("support",))
     story = item("S-2", parent="E-2")

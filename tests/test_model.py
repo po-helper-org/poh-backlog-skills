@@ -50,6 +50,12 @@ def test_phase_tags_returns_only_phase_labels():
     assert item.phase_tags == ("mvp", "grow")
 
 
+def test_phase_tags_for_returns_only_labels_from_given_names():
+    item = BacklogItem.from_dict({**RAW, "labels": ["этап-mvp", "backend", "grow"]})
+    assert item.phase_tags_for(("этап-mvp", "этап-grow")) == ("этап-mvp",)
+    assert item.phase_tags_for(("нет-такого",)) == ()
+
+
 def test_is_open():
     assert BacklogItem.from_dict(RAW).is_open is True
     assert BacklogItem.from_dict({**RAW, "status": "closed"}).is_open is False

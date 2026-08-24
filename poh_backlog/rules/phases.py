@@ -15,15 +15,17 @@ def exactly_one_phase_tag(item: BacklogItem, ctx: AuditContext) -> list[Finding]
     parent = ctx.items.get(item.parent)
     if parent is None or not is_feature_epic(parent, ctx.profile):
         return []
-    tags = list(item.phase_tags)
+    phase_tag_names = (ctx.profile.get("phases.mvp_tag"), ctx.profile.get("phases.grow_tag"))
+    tags = list(item.phase_tags_for(phase_tag_names))
     if len(tags) == 1:
         return []
+    detail = ", ".join(tags) if tags else "нет ни одного"
     return [Finding(
         rule_id="PHS-TAG-001",
         item_id=item.id,
         bucket="update",
         severity="high",
-        message=f"Тегов фазы {len(tags)} вместо одного: {tags or 'нет ни одного'}",
+        message=f"Тегов фазы {len(tags)} вместо одного: {detail}",
         evidence={"phase_tags": tags, "epic": parent.id},
     )]
 
