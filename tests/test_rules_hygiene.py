@@ -81,3 +81,47 @@ def test_orphan_story_flagged():
 def test_initiative_without_parent_not_orphan():
     top = item("I-1", type="initiative", parent=None)
     assert RULES["HYG-ORPHAN-004"](top, ctx([top])) == []
+
+
+def test_stale_story_flagged_at_exact_threshold():
+    story_limit = PROFILE.get("staleness.story_days")
+    at_threshold = item("S-8", updated_at=(NOW - timedelta(days=story_limit)).isoformat())
+    findings = RULES["HYG-STALE-001"](at_threshold, ctx([at_threshold]))
+    assert len(findings) == 1
+    assert findings[0].evidence["days_since_update"] == story_limit
+
+
+def test_stale_story_not_flagged_before_threshold():
+    story_limit = PROFILE.get("staleness.story_days")
+    before_threshold = item("S-9", updated_at=(NOW - timedelta(days=story_limit - 1)).isoformat())
+    assert RULES["HYG-STALE-001"](before_threshold, ctx([before_threshold])) == []
+
+
+def test_stale_bug_flagged_at_exact_threshold():
+    bug_limit = PROFILE.get("staleness.bug_days")
+    bug = item("B-2", type="bug", updated_at=(NOW - timedelta(days=bug_limit)).isoformat())
+    findings = RULES["HYG-STALE-001"](bug, ctx([bug]))
+    assert len(findings) == 1
+    assert findings[0].evidence["days_since_update"] == bug_limit
+
+
+def test_stale_bug_not_flagged_before_threshold():
+    bug_limit = PROFILE.get("staleness.bug_days")
+    bug = item("B-3", type="bug", updated_at=(NOW - timedelta(days=bug_limit - 1)).isoformat())
+    assert RULES["HYG-STALE-001"](bug, ctx([bug])) == []
+
+
+def test_description_not_flagged_at_exact_threshold():
+    word_limit = PROFILE.get("description.min_words")
+    text = " ".join(["слово"] * word_limit)
+    item_at_limit = item("S-10", description=text)
+    assert RULES["HYG-DESC-002"](item_at_limit, ctx([item_at_limit])) == []
+
+
+def test_description_flagged_before_threshold():
+    word_limit = PROFILE.get("description.min_words")
+    text = " ".join(["слово"] * (word_limit - 1))
+    item_below_limit = item("S-11", description=text)
+    findings = RULES["HYG-DESC-002"](item_below_limit, ctx([item_below_limit]))
+    assert len(findings) == 1
+    assert findings[0].evidence["word_count"] == word_limit - 1
