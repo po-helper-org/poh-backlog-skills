@@ -1,7 +1,9 @@
 from datetime import date
 
+import pytest
+
 from poh_backlog.model import Finding
-from poh_backlog.suppress import is_suppressed, load_suppressions
+from poh_backlog.suppress import DecisionsError, is_suppressed, load_suppressions
 
 TODAY = date(2026, 8, 18)
 
@@ -51,3 +53,102 @@ def test_other_item_not_suppressed(tmp_path):
                  "  verdict: rejected\n  reason: r\n  suppress_until: forever\n")
     sup = load_suppressions(path)
     assert is_suppressed(finding(), sup, TODAY) is False
+
+
+# --- граница даты истечения: named day включена в подавление ---
+
+def test_day_before_until_is_suppressed(tmp_path):
+    path = write(tmp_path,
+                 "- rule_id: HYG-STALE-001\n  item: GH-412\n"
+                 "  verdict: rejected\n  reason: r\n  suppress_until: 2026-12-01\n")
+    sup = load_suppressions(path)
+    assert is_suppressed(finding(), sup, date(2026, 11, 30)) is True
+
+
+def test_named_day_itself_is_suppressed(tmp_path):
+    path = write(tmp_path,
+                 "- rule_id: HYG-STALE-001\n  item: GH-412\n"
+                 "  verdict: rejected\n  reason: r\n  suppress_until: 2026-12-01\n")
+    sup = load_suppressions(path)
+    assert is_suppressed(finding(), sup, date(2026, 12, 1)) is True
+
+
+def test_day_after_until_is_not_suppressed(tmp_path):
+    path = write(tmp_path,
+                 "- rule_id: HYG-STALE-001\n  item: GH-412\n"
+                 "  verdict: rejected\n  reason: r\n  suppress_until: 2026-12-01\n")
+    sup = load_suppressions(path)
+    assert is_suppressed(finding(), sup, date(2026, 12, 2)) is False
+
+
+# --- некорректный decisions.yaml падает громко, с понятным сообщением ---
+
+def test_invalid_yaml_syntax_raises_decisions_error(tmp_path):
+    path = write(tmp_path, "- rule_id: HYG-STALE-001\n  item: [unclosed\n")
+    with pytest.raises(DecisionsError) as exc_info:
+        load_suppressions(path)
+    assert str(path) in str(exc_info.value)
+    assert exc_info.value.__cause__ is not None
+
+
+def test_top_level_mapping_raises_decisions_error(tmp_path):
+    path = write(tmp_path,
+                 "rule_id: HYG-STALE-001\nitem: GH-412\nverdict: rejected\n")
+    with pytest.raises(DecisionsError) as exc_info:
+        load_suppressions(path)
+    assert str(path) in str(exc_info.value)
+
+
+def test_entry_missing_rule_id_raises_decisions_error(tmp_path):
+    path = write(tmp_path,
+                 "- item: GH-412\n  verdict: rejected\n  suppress_until: forever\n")
+    with pytest.raises(DecisionsError) as exc_info:
+        load_suppressions(path)
+    message = str(exc_info.value)
+    assert str(path) in message
+    assert "1" in message
+
+
+def test_entry_missing_item_raises_decisions_error(tmp_path):
+    path = write(tmp_path,
+                 "- rule_id: HYG-STALE-001\n  verdict: rejected\n  suppress_until: forever\n")
+    with pytest.raises(DecisionsError) as exc_info:
+        load_suppressions(path)
+    message = str(exc_info.value)
+    assert str(path) in message
+    assert "1" in message
+
+
+def test_invalid_suppress_until_raises_decisions_error(tmp_path):
+    path = write(tmp_path,
+                 "- rule_id: HYG-STALE-001\n  item: GH-412\n"
+                 "  verdict: rejected\n  suppress_until: не дата\n")
+    with pytest.raises(DecisionsError) as exc_info:
+        load_suppressions(path)
+    message = str(exc_info.value)
+    assert str(path) in message
+    assert "не дата" in message
+
+
+def test_second_entry_index_reported_when_first_is_valid(tmp_path):
+    path = write(tmp_path,
+                 "- rule_id: HYG-STALE-001\n  item: GH-412\n  verdict: rejected\n"
+                 "  suppress_until: forever\n"
+                 "- item: GH-999\n  verdict: rejected\n  suppress_until: forever\n")
+    with pytest.raises(DecisionsError) as exc_info:
+        load_suppressions(path)
+    assert "2" in str(exc_info.value)
+
+
+# --- поведение, которое уже было правильным, но не было закреплено тестами ---
+
+def test_empty_file_yields_empty_list(tmp_path):
+    path = write(tmp_path, "")
+    assert load_suppressions(path) == []
+
+
+def test_missing_suppress_until_defaults_to_forever(tmp_path):
+    path = write(tmp_path,
+                 "- rule_id: HYG-STALE-001\n  item: GH-412\n  verdict: rejected\n  reason: r\n")
+    sup = load_suppressions(path)
+    assert is_suppressed(finding(), sup, date(2099, 1, 1)) is True
