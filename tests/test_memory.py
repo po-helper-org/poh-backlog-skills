@@ -1,11 +1,14 @@
 import json
 from pathlib import Path
 
+import pytest
 import yaml
 
-from poh_backlog.memory import (STAGES, append_decisions, backlog_check_ac_argv,
-                                backlog_create_argv, load_latest_findings_count,
-                                load_latest_snapshot, write_state)
+from poh_backlog.memory import (STAGES, StateError, append_decisions,
+                                backlog_check_ac_argv, backlog_create_argv,
+                                load_latest_findings_count, load_latest_snapshot,
+                                write_state)
+from poh_backlog.suppress import DecisionsError
 
 
 def test_stages_match_spec():
@@ -51,7 +54,9 @@ def test_backlog_create_argv_has_label_status_and_all_stages(tmp_path):
 
 def test_backlog_check_ac_argv_uses_one_based_stage_index():
     argv = backlog_check_ac_argv("task-7", "plan")
-    assert argv == ["backlog", "task", "edit", "task-7", "--check-ac", "3"]
+    # "plan" — третья стадия в STAGES (индекс 2), --check-ac ждёт 1-based номер.
+    assert argv == ["backlog", "task", "edit", "task-7", "--check-ac",
+                    str(STAGES.index("plan") + 1)]
 
 
 def test_append_decisions_merges_into_existing_file(tmp_path):
@@ -62,3 +67,57 @@ def test_append_decisions_merges_into_existing_file(tmp_path):
                              "reason": "r", "suppress_until": "forever"}])
     entries = yaml.safe_load(path.read_text(encoding="utf-8"))
     assert [e["rule_id"] for e in entries] == ["A", "B"]
+
+
+def test_load_latest_snapshot_raises_state_error_on_corrupted_file(tmp_path):
+    state_dir = write_state(tmp_path, "2026-08-18-01", {"items": {}}, [], {}, [])
+    (state_dir / "items.snapshot.json").write_text("{не json", encoding="utf-8")
+    with pytest.raises(StateError) as excinfo:
+        load_latest_snapshot(tmp_path)
+    assert str(state_dir / "items.snapshot.json") in str(excinfo.value)
+
+
+def test_load_latest_findings_count_raises_state_error_on_corrupted_file(tmp_path):
+    state_dir = write_state(tmp_path, "2026-08-18-01", {"items": {}}, [], {}, [])
+    (state_dir / "findings.json").write_text("{не json", encoding="utf-8")
+    with pytest.raises(StateError) as excinfo:
+        load_latest_findings_count(tmp_path)
+    assert str(state_dir / "findings.json") in str(excinfo.value)
+
+
+def test_append_decisions_raises_decisions_error_on_malformed_yaml(tmp_path):
+    path = tmp_path / "decisions.yaml"
+    path.write_text("- rule_id: [это не закрытая скобка\n", encoding="utf-8")
+    with pytest.raises(DecisionsError) as excinfo:
+        append_decisions(path, [{"rule_id": "A", "item": "S-1",
+                                 "verdict": "rejected", "reason": "r",
+                                 "suppress_until": "forever"}])
+    assert str(path) in str(excinfo.value)
+
+
+def test_append_decisions_raises_decisions_error_when_content_is_not_a_list(tmp_path):
+    path = tmp_path / "decisions.yaml"
+    path.write_text("rule_id: A\nitem: S-1\n", encoding="utf-8")
+    with pytest.raises(DecisionsError) as excinfo:
+        append_decisions(path, [{"rule_id": "B", "item": "S-2",
+                                 "verdict": "rejected", "reason": "r",
+                                 "suppress_until": "forever"}])
+    assert str(path) in str(excinfo.value)
+
+
+def test_write_state_leaves_no_temporary_files(tmp_path):
+    state_dir = write_state(tmp_path, "2026-08-18-01", {"items": {}}, [], {}, [])
+    assert sorted(p.name for p in state_dir.iterdir()) == [
+        "applied.json", "findings.json", "items.snapshot.json", "plan.json",
+    ]
+
+
+def test_append_decisions_twice_round_trips_and_leaves_no_temp_file(tmp_path):
+    path = tmp_path / "decisions.yaml"
+    append_decisions(path, [{"rule_id": "A", "item": "S-1", "verdict": "rejected",
+                             "reason": "r", "suppress_until": "forever"}])
+    append_decisions(path, [{"rule_id": "B", "item": "S-2", "verdict": "rejected",
+                             "reason": "r", "suppress_until": "forever"}])
+    entries = yaml.safe_load(path.read_text(encoding="utf-8"))
+    assert [e["rule_id"] for e in entries] == ["A", "B"]
+    assert [p.name for p in path.parent.iterdir()] == ["decisions.yaml"]
