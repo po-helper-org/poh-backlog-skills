@@ -5,7 +5,7 @@ from dataclasses import replace
 from poh_backlog.catalog import load_catalog
 from poh_backlog.model import BacklogItem, Finding
 from poh_backlog.planner import (ALLOWED_OPS, build_plan, plan_to_dict,
-                                 read_run_id, render_plan_md)
+                                 read_run_id, render_plan_md, trace_label)
 
 CATALOG = load_catalog(Path(__file__).parent.parent / "poh_backlog" / "data" / "catalog.yaml")
 
@@ -78,7 +78,8 @@ def test_plan_to_dict_round_trips_keys():
     assert data["run_id"] == "2026-08-18-01"
     assert data["shadow"] is True
     assert set(data["actions"][0]) == {"action_key", "rule_id", "item_id", "bucket",
-                                       "op", "rationale", "expected_effect"}
+                                       "op", "rationale", "expected_effect", "trace_label",
+                                       "promised_from"}
 
 
 def test_plan_run_id_and_shadow_default_to_undecided_shape():
@@ -148,3 +149,24 @@ def test_deferred_section_lists_each_deferred_item_and_rule():
     for action in plan.deferred:
         assert action.item_id in text
         assert action.rule_id in text
+
+
+def test_trace_label_format():
+    assert trace_label("HYG-STALE-001") == "poh:HYG-STALE-001"
+
+
+def test_action_carries_trace_label():
+    plan = build_plan([finding()], CATALOG, {"S-1": item("S-1")}, max_actions=50)
+    assert plan.actions[0].trace_label == "poh:HYG-STALE-001"
+
+
+def test_action_promised_from_defaults_to_none():
+    plan = build_plan([finding()], CATALOG, {"S-1": item("S-1")}, max_actions=50)
+    assert plan.actions[0].promised_from is None
+
+
+def test_plan_to_dict_includes_new_fields():
+    plan = build_plan([finding()], CATALOG, {"S-1": item("S-1")}, max_actions=50)
+    entry = plan_to_dict(plan)["actions"][0]
+    assert entry["trace_label"] == "poh:HYG-STALE-001"
+    assert entry["promised_from"] is None

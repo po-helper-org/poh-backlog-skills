@@ -21,6 +21,16 @@ BUCKET_TITLES = {
     "no-action": "Без действий",
 }
 
+# Префикс машинного следа. Каждое исполненное действие оставляет на элементе
+# метку poh:<rule_id>: в канонической модели комментариев нет, поэтому
+# доказательством факта применения служит метка, а не текст комментария.
+TRACE_PREFIX = "poh:"
+
+
+def trace_label(rule_id: str) -> str:
+    """Метка, которую host-агент обязан поставить, исполнив действие."""
+    return f"{TRACE_PREFIX}{rule_id}"
+
 
 @dataclass(frozen=True)
 class Action:
@@ -31,6 +41,10 @@ class Action:
     op: str
     rationale: str
     expected_effect: str | None
+    trace_label: str = ""
+    # Прогон, в котором действие уже утверждали, если оно вернулось как
+    # неисполненное. None означает, что действие пришло из свежей находки.
+    promised_from: str | None = None
 
 
 @dataclass(frozen=True)
@@ -83,6 +97,7 @@ def build_plan(findings: list[Finding], catalog: dict[str, RuleSpec],
             op=spec.action,
             rationale=finding.message,
             expected_effect=spec.expected_effect,
+            trace_label=trace_label(finding.rule_id),
         ))
 
     actions.sort(key=lambda a: (
