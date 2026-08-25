@@ -17,12 +17,14 @@ from poh_backlog.diff import (detect_phase_drift, diff_snapshots,
 from poh_backlog.memory import (StateError, append_decisions,
                                 backlog_create_argv,
                                 load_latest_findings_count,
-                                load_latest_snapshot, write_state)
+                                load_latest_snapshot, write_state,
+                                write_verdicts)
 from poh_backlog.model import BacklogItem, ensure_aware
 from poh_backlog.planner import (Action, Plan, build_plan, plan_to_dict,
                                  read_run_id, render_plan_md)
 from poh_backlog.profile import load_profile
 from poh_backlog.suppress import DecisionsError, is_suppressed, load_suppressions
+from poh_backlog.verify import render_verify_md, verdicts_to_dicts, verify_actions
 
 # Каталог самого пакета, а не репозитория: rules/, prompts/, mappings/ и
 # schemas/ раньше лежали в корне репозитория, вне пакета poh_backlog, и
@@ -163,6 +165,54 @@ def cmd_approve(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_verify(args: argparse.Namespace) -> int:
+    out = Path(args.out)
+    approved_path = out / "approved.json"
+    plan_json_path = out / "plan.json"
+    if not approved_path.exists():
+        print(
+            f"{approved_path} не найден: проверять нечего. Сначала выполните "
+            f"'approve' для этого прогона.",
+            file=sys.stderr,
+        )
+        return 2
+
+    approved = json.loads(approved_path.read_text(encoding="utf-8"))
+    plan_data = json.loads(plan_json_path.read_text(encoding="utf-8"))
+    run_id = plan_data.get("run_id")
+    if not run_id:
+        print(f"{plan_json_path} не содержит run_id; проверка отменена.",
+              file=sys.stderr)
+        return 2
+
+    now = ensure_aware(datetime.fromisoformat(args.now))
+    items = _load_items(args.items)
+    catalog = load_catalog(args.catalog)
+    profile = load_profile(args.thresholds,
+                           Path(args.profile) if args.profile else None)
+
+    state_dir = Path(args.state) / run_id
+    snapshot_path = state_dir / "items.snapshot.json"
+    prev_snapshot = None
+    if snapshot_path.exists():
+        prev_snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
+
+    result = verify_actions(approved, items, catalog, profile, now, prev_snapshot)
+    _write(out / "verify.md", render_verify_md(result, run_id))
+    write_verdicts(Path(args.state), run_id, verdicts_to_dicts(result.verdicts),
+                   [v.action_key for v in result.verdicts if v.status == "done"])
+
+    percent = round(result.fidelity * 100)
+    print(f"Проверка прогона {run_id}")
+    print(f"Действий проверено: {len(result.verdicts)}")
+    print(f"Достоверность исполнения: {percent}%")
+    if prev_snapshot is None:
+        print("Снимок «до» не найден: раздел побочного урона пропущен")
+    else:
+        print(f"Изменено вне плана: {len(result.collateral)}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="poh-backlog")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -188,6 +238,18 @@ def main(argv: list[str] | None = None) -> int:
     approve.add_argument("--out", required=True)
     approve.add_argument("--decisions", default="decisions.yaml")
     approve.set_defaults(func=cmd_approve)
+
+    verify_cmd = sub.add_parser("verify", help="проверить, что утверждённое исполнено")
+    verify_cmd.add_argument("--items", required=True,
+                            help="свежий срез беклога после исполнения")
+    verify_cmd.add_argument("--out", required=True)
+    verify_cmd.add_argument("--state", required=True)
+    verify_cmd.add_argument("--now", default=datetime.now().astimezone().isoformat(),
+                            help="момент проверки; без смещения трактуется как UTC")
+    verify_cmd.add_argument("--profile", default=None)
+    verify_cmd.add_argument("--catalog", default=str(DEFAULT_CATALOG))
+    verify_cmd.add_argument("--thresholds", default=str(DEFAULT_THRESHOLDS))
+    verify_cmd.set_defaults(func=cmd_verify)
 
     args = parser.parse_args(argv)
     try:

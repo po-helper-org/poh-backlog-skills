@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -366,3 +367,57 @@ def test_run_accepts_naive_timestamps_in_items_json(tmp_path):
                  "--run-id", "run-1",
                  "--now", "2026-08-18T00:00:00+00:00", "--shadow"])
     assert code == 0
+
+
+def _tick_first(workspace):
+    plan_md = workspace / "out" / "plan.md"
+    text = plan_md.read_text(encoding="utf-8")
+    key = re.search(r"- \[ \] `([0-9a-f]{16})`", text).group(1)
+    plan_md.write_text(text.replace(f"- [ ] `{key}`", f"- [x] `{key}`"),
+                       encoding="utf-8")
+    return key
+
+
+def _items_after(workspace, mutate):
+    raw = json.loads((workspace / "items.json").read_text(encoding="utf-8"))
+    mutate(raw)
+    path = workspace / "items-after.json"
+    path.write_text(json.dumps(raw, ensure_ascii=False), encoding="utf-8")
+    return path
+
+
+def test_verify_writes_report_and_verdicts(workspace):
+    run_cli(workspace)
+    _tick_first(workspace)
+    main(["approve", "--out", str(workspace / "out"),
+          "--decisions", str(workspace / "decisions.yaml")])
+    after = _items_after(workspace, lambda raw: None)
+    code = main(["verify", "--items", str(after),
+                 "--out", str(workspace / "out"),
+                 "--state", str(workspace / "state"),
+                 "--now", "2026-08-18T00:00:00+00:00"])
+    assert code == 0
+    assert (workspace / "out" / "verify.md").exists()
+    assert (workspace / "state" / "2026-08-18-01" / "verdicts.json").exists()
+
+
+def test_verify_reports_not_applied_when_host_did_nothing(workspace, capsys):
+    run_cli(workspace)
+    _tick_first(workspace)
+    main(["approve", "--out", str(workspace / "out"),
+          "--decisions", str(workspace / "decisions.yaml")])
+    after = _items_after(workspace, lambda raw: None)
+    main(["verify", "--items", str(after), "--out", str(workspace / "out"),
+          "--state", str(workspace / "state"),
+          "--now", "2026-08-18T00:00:00+00:00"])
+    assert "Достоверность исполнения: 0%" in capsys.readouterr().out
+
+
+def test_verify_without_approved_exits_with_code_2(workspace, capsys):
+    run_cli(workspace)
+    code = main(["verify", "--items", str(workspace / "items.json"),
+                 "--out", str(workspace / "out"),
+                 "--state", str(workspace / "state"),
+                 "--now", "2026-08-18T00:00:00+00:00"])
+    assert code == 2
+    assert "approved.json" in capsys.readouterr().err
