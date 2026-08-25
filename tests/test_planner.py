@@ -1,9 +1,11 @@
 from pathlib import Path
 
+from dataclasses import replace
+
 from poh_backlog.catalog import load_catalog
 from poh_backlog.model import BacklogItem, Finding
 from poh_backlog.planner import (ALLOWED_OPS, build_plan, plan_to_dict,
-                                 render_plan_md)
+                                 read_run_id, render_plan_md)
 
 CATALOG = load_catalog(Path(__file__).parent.parent / "rules" / "catalog.yaml")
 
@@ -70,10 +72,40 @@ def test_plan_md_lists_checkboxes_and_deferred_explicitly():
 
 def test_plan_to_dict_round_trips_keys():
     plan = build_plan([finding()], CATALOG, {"S-1": item("S-1")}, max_actions=50)
+    plan = replace(plan, run_id="2026-08-18-01", shadow=True)
     data = plan_to_dict(plan)
-    assert set(data) == {"actions", "deferred"}
+    assert set(data) == {"actions", "deferred", "run_id", "shadow"}
+    assert data["run_id"] == "2026-08-18-01"
+    assert data["shadow"] is True
     assert set(data["actions"][0]) == {"action_key", "rule_id", "item_id", "bucket",
                                        "op", "rationale", "expected_effect"}
+
+
+def test_plan_run_id_and_shadow_default_to_undecided_shape():
+    # build_plan сам не знает про run_id/shadow конкретного запуска CLI —
+    # это дописывает cli.cmd_run уже после построения плана. Дефолты должны
+    # оставаться безопасными, если кто-то создаст Plan напрямую.
+    plan = build_plan([finding()], CATALOG, {"S-1": item("S-1")}, max_actions=50)
+    assert plan.run_id is None
+    assert plan.shadow is False
+
+
+def test_render_plan_md_header_explains_three_states_in_russian():
+    plan = build_plan([finding()], CATALOG, {"S-1": item("S-1")}, max_actions=50)
+    text = render_plan_md(plan, run_id="2026-08-18-01")
+    assert "[x]" in text
+    assert "[-]" in text
+    assert "Снятая галочка означает отказ" not in text
+
+
+def test_render_plan_md_embeds_machine_readable_run_id():
+    plan = build_plan([finding()], CATALOG, {"S-1": item("S-1")}, max_actions=50)
+    text = render_plan_md(plan, run_id="2026-08-18-01")
+    assert read_run_id(text) == "2026-08-18-01"
+
+
+def test_read_run_id_is_none_when_marker_absent():
+    assert read_run_id("# план без маркера\n\n- [ ] `abc` X\n") is None
 
 
 def _checkbox_lines(text: str) -> list[str]:

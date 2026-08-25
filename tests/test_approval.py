@@ -1,6 +1,7 @@
 from pathlib import Path
 
-from poh_backlog.approval import (read_approvals, rejections_to_decisions,
+from poh_backlog.approval import (has_decisions, read_approvals,
+                                  read_rejections, rejections_to_decisions,
                                   split_by_approval)
 from poh_backlog.catalog import load_catalog
 from poh_backlog.model import BacklogItem, Finding
@@ -17,12 +18,10 @@ def item(id_):
     })
 
 
-def sample_plan():
-    findings = [
-        Finding("HYG-STALE-001", "S-1", "close", "medium", "стухло", {}),
-        Finding("HYG-STALE-001", "S-2", "close", "medium", "стухло", {}),
-    ]
-    items = {"S-1": item("S-1"), "S-2": item("S-2")}
+def sample_plan(n=2):
+    findings = [Finding("HYG-STALE-001", f"S-{i}", "close", "medium", "стухло", {})
+                for i in range(1, n + 1)]
+    items = {f"S-{i}": item(f"S-{i}") for i in range(1, n + 1)}
     return build_plan(findings, CATALOG, items, max_actions=50)
 
 
@@ -37,22 +36,63 @@ def test_read_approvals_accepts_uppercase_marker():
     assert read_approvals(text) == {"aaaa1111bbbb2222"}
 
 
-def test_split_by_approval_separates_actions():
+def test_read_rejections_picks_dash_marker_only():
+    text = ("- [-] `aaaa1111bbbb2222` **HYG-STALE-001** S-1 — propose_close — m\n"
+            "- [ ] `cccc3333dddd4444` **HYG-STALE-001** S-2 — propose_close — m\n"
+            "- [x] `eeee5555ffff6666` **HYG-STALE-001** S-3 — propose_close — m\n")
+    assert read_rejections(text) == {"aaaa1111bbbb2222"}
+
+
+def test_has_decisions_false_for_untouched_plan():
+    plan = sample_plan()
+    text = render_plan_md(plan, "run-1")
+    assert has_decisions(text) is False
+
+
+def test_has_decisions_true_for_a_single_tick_or_reject():
+    plan = sample_plan()
+    key = plan.actions[0].action_key
+    ticked = render_plan_md(plan, "run-1").replace(f"- [ ] `{key}`", f"- [x] `{key}`")
+    rejected = render_plan_md(plan, "run-1").replace(f"- [ ] `{key}`", f"- [-] `{key}`")
+    assert has_decisions(ticked) is True
+    assert has_decisions(rejected) is True
+
+
+def test_split_by_approval_leaves_untouched_action_undecided():
     plan = sample_plan()
     approved_key = plan.actions[0].action_key
     text = render_plan_md(plan, "run-1").replace(
         f"- [ ] `{approved_key}`", f"- [x] `{approved_key}`")
     result = split_by_approval(plan, text, shadow=False)
     assert [a.action_key for a in result.approved] == [approved_key]
-    assert len(result.rejected) == 1
+    assert result.rejected == []
+    assert len(result.undecided) == 1
 
 
-def test_shadow_mode_approves_nothing():
+def test_split_by_approval_flags_explicit_rejection():
+    plan = sample_plan(3)
+    approved_key = plan.actions[0].action_key
+    rejected_key = plan.actions[1].action_key
+    undecided_key = plan.actions[2].action_key
+    text = render_plan_md(plan, "run-1")
+    text = text.replace(f"- [ ] `{approved_key}`", f"- [x] `{approved_key}`")
+    text = text.replace(f"- [ ] `{rejected_key}`", f"- [-] `{rejected_key}`")
+    result = split_by_approval(plan, text, shadow=False)
+    assert [a.action_key for a in result.approved] == [approved_key]
+    assert [a.action_key for a in result.rejected] == [rejected_key]
+    assert [a.action_key for a in result.undecided] == [undecided_key]
+
+
+def test_shadow_mode_decides_nothing():
+    # Режим shadow существует, чтобы копить размеченные данные бесплатно, не
+    # запрещая план целиком: раньше (баг) он трактовал каждое действие как
+    # отклонённое навсегда, что было противоположно цели shadow-режима.
     plan = sample_plan()
     text = render_plan_md(plan, "run-1").replace("- [ ] ", "- [x] ")
     result = split_by_approval(plan, text, shadow=True)
     assert result.approved == []
-    assert len(result.rejected) == 2
+    assert result.rejected == []
+    assert len(result.undecided) == 2
 
 
 def test_rejections_become_decision_entries():

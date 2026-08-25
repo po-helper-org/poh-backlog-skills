@@ -9,6 +9,8 @@ from poh_backlog.catalog import ACTIONS as ALLOWED_OPS
 from poh_backlog.catalog import RuleSpec
 from poh_backlog.model import BacklogItem, Finding
 
+RUN_ID_MARK = re.compile(r"^<!--\s*run_id:\s*(\S+)\s*-->\s*$", re.MULTILINE)
+
 SEVERITY_ORDER = {"high": 0, "medium": 1, "low": 2}
 BUCKET_TITLES = {
     "close": "Закрыть",
@@ -35,6 +37,14 @@ class Action:
 class Plan:
     actions: list[Action] = field(default_factory=list)
     deferred: list[Action] = field(default_factory=list)
+    # Заполняются cli.cmd_run уже после build_plan (через dataclasses.replace):
+    # build_plan не знает, из какого запуска CLI он вызван. run_id и shadow
+    # прогона, породившего этот план, попадают в plan.json, чтобы approve
+    # не мог с ним разойтись: shadow нельзя обойти, забыв флаг на стороне
+    # approve, а run_id позволяет обнаружить, что plan.md был перезаписан
+    # более новым прогоном, пока галочки в нём относились к старому.
+    run_id: str | None = None
+    shadow: bool = False
 
 
 def _action_key(rule_id: str, item_id: str, revision: str) -> str:
@@ -80,12 +90,30 @@ def build_plan(findings: list[Finding], catalog: dict[str, RuleSpec],
     return Plan(actions=actions[:max_actions], deferred=actions[max_actions:])
 
 
+def read_run_id(plan_md: str) -> str | None:
+    """Читает машиночитаемую метку прогона, которую пишет `render_plan_md`.
+
+    Используется `cli.cmd_approve`, чтобы сверить, к какому прогону
+    относится `plan.md`, с run_id, записанным в `plan.json`: если файлы
+    разошлись (например, `plan.md` перезаписан более новым `run`, пока
+    старый `plan.json` ещё лежит рядом), апрув обязан отказаться, а не
+    молча принять решения, снятые с чужого плана.
+    """
+    match = RUN_ID_MARK.search(plan_md)
+    return match.group(1) if match else None
+
+
 def render_plan_md(plan: Plan, run_id: str) -> str:
     lines = [
         f"# План наведения порядка, прогон {run_id}",
+        f"<!-- run_id: {run_id} -->",
         "",
-        "Снятая галочка означает отказ: действие не исполняется и попадает в",
-        "`decisions.yaml` как отклонённое. Отмеченные действия исполняет host-агент.",
+        "У каждого действия три состояния, а не два:",
+        "поставьте `[x]` — действие утверждено и уйдёт в `approved.json`;",
+        "поставьте `[-]` — действие отклонено навсегда и уйдёт в",
+        "`decisions.yaml` как подавление; оставьте `[ ]` нетронутым — решения",
+        "нет, действие не исполняется и не подавляется, а вернётся в план",
+        "следующего прогона.",
         "",
         f"Всего действий: {len(plan.actions)}",
         f"Отложено до следующего прогона: {len(plan.deferred)}",
@@ -118,4 +146,6 @@ def plan_to_dict(plan: Plan) -> dict:
     return {
         "actions": [asdict(a) for a in plan.actions],
         "deferred": [asdict(a) for a in plan.deferred],
+        "run_id": plan.run_id,
+        "shadow": plan.shadow,
     }
