@@ -6,7 +6,7 @@ import yaml
 from poh_backlog.catalog import ACTIONS, BUCKETS, SEVERITIES, CatalogError, load_catalog
 
 REPO_ROOT = Path(__file__).parent.parent
-CATALOG = REPO_ROOT / "rules" / "catalog.yaml"
+CATALOG = REPO_ROOT / "poh_backlog" / "data" / "catalog.yaml"
 
 EXPECTED_IDS = {
     "HYG-STALE-001", "HYG-DESC-002", "HYG-EST-003", "HYG-ORPHAN-004",
@@ -102,7 +102,10 @@ def test_judgment_rules_have_existing_prompt_files_and_others_do_not():
     for entry in raw:
         if entry["kind"] == "judgment":
             assert "prompt" in entry, entry["id"]
-            prompt_path = REPO_ROOT / entry["prompt"]
+            # Путь в каталоге (например, "prompts/mvp_necessity.md") —
+            # относительно каталога с данными (poh_backlog/data/), где лежит
+            # сам catalog.yaml, а не относительно корня репозитория.
+            prompt_path = CATALOG.parent / entry["prompt"]
             assert prompt_path.is_file(), f"{entry['id']}: {prompt_path} не существует"
         else:
             assert "prompt" not in entry, entry["id"]

@@ -1,7 +1,7 @@
 """Тесты для движка аудита poh_backlog.audit."""
 import subprocess
 import sys
-from datetime import date, datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import poh_backlog.rules.hygiene  # noqa: F401
@@ -14,8 +14,8 @@ from poh_backlog.suppress import Suppression
 
 ROOT = Path(__file__).parent.parent
 NOW = datetime(2026, 8, 18, tzinfo=timezone.utc)
-CATALOG = load_catalog(ROOT / "rules" / "catalog.yaml")
-PROFILE = load_profile(ROOT / "rules" / "thresholds.yaml")
+CATALOG = load_catalog(ROOT / "poh_backlog" / "data" / "catalog.yaml")
+PROFILE = load_profile(ROOT / "poh_backlog" / "data" / "thresholds.yaml")
 LONG = " ".join(["слово"] * 25)
 
 
@@ -113,5 +113,6 @@ def test_importing_only_audit_module_registers_all_deterministic_rules():
         cwd=ROOT,
         capture_output=True,
         text=True,
+        timeout=10,
     )
     assert result.returncode == 0, result.stdout + result.stderr

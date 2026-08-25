@@ -2,10 +2,30 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 PHASE_TAGS = ("mvp", "grow")
+
+
+def ensure_aware(value: datetime) -> datetime:
+    """Приводит наивный (без часового пояса) datetime к aware, трактуя его
+    как UTC.
+
+    Единая точка нормализации границы: и `--now` из CLI, и `created_at`/
+    `updated_at` из items.json могут прийти наивными — `--now` по умолчанию
+    aware, но человек может передать своё значение без смещения, а
+    `schemas/backlog-item.schema.json` типизирует отметки времени как
+    обычные строки и ничего не гарантирует про смещение. Дальше по
+    конвейеру эти datetime вычитаются друг из друга (например,
+    `ctx.now - item.updated_at` в HYG-STALE-001), а вычитание naive из
+    aware — это TypeError, а не тихая ошибка. Нормализуя здесь, весь
+    остальной код работает с aware datetime и не должен знать про этот
+    случай.
+    """
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value
 
 
 @dataclass(frozen=True)
@@ -30,8 +50,8 @@ class BacklogItem:
             title=raw["title"],
             description=raw.get("description") or "",
             status=raw["status"],
-            created_at=datetime.fromisoformat(raw["created_at"]),
-            updated_at=datetime.fromisoformat(raw["updated_at"]),
+            created_at=ensure_aware(datetime.fromisoformat(raw["created_at"])),
+            updated_at=ensure_aware(datetime.fromisoformat(raw["updated_at"])),
             labels=tuple(raw.get("labels") or ()),
             parent=raw.get("parent"),
             estimate=raw.get("estimate"),

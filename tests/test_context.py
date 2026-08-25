@@ -51,9 +51,6 @@ def test_dangling_parent_reference():
     story_with_missing_parent = item("S-1", parent="MISSING-PARENT")
     ctx = build_context([story_with_missing_parent], PROFILE, NOW)
 
-    # (a) build_context не выбросил исключение
-    assert True
-
     # (b) элемент присутствует в ctx.items
     assert "S-1" in ctx.items
     assert ctx.items["S-1"].id == "S-1"

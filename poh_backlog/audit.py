@@ -18,8 +18,8 @@ from poh_backlog.suppress import Suppression, is_suppressed
 # и тогда каждое правило считалось бы пропущенным, а находок не было бы
 # никогда. Поэтому линтер не должен удалять эти импорты как "неиспользуемые":
 # они используются ради регистрации, а не ради имён модулей.
-import poh_backlog.rules.hygiene  # noqa: F401,E402
-import poh_backlog.rules.phases  # noqa: F401,E402
+import poh_backlog.rules.hygiene  # noqa: F401
+import poh_backlog.rules.phases  # noqa: F401
 
 # Правила, считающиеся на диффе снимков, а не по одному снимку.
 # Их считает poh_backlog.diff, движок аудита их не трогает и не числит пропущенными.

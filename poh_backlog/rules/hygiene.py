@@ -36,7 +36,7 @@ def short_description(item: BacklogItem, ctx: AuditContext) -> list[Finding]:
     words = len(item.description.split())
     if words >= limit:
         return []
-    word_form = ru_plural(words, "слова", "слова", "слов")
+    word_form = ru_plural(words, "слова", "слов", "слов")
     return [Finding(
         rule_id="HYG-DESC-002",
         item_id=item.id,

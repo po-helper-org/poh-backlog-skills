@@ -136,4 +136,4 @@ def test_short_description_message_uses_correct_plural_for_one_word():
 def test_short_description_message_uses_correct_plural_for_several_words():
     two = item("S-13", description="два слова")
     findings = RULES["HYG-DESC-002"](two, ctx([two]))
-    assert findings[0].message == "Описание из 2 слова при пороге 20"
+    assert findings[0].message == "Описание из 2 слов при пороге 20"

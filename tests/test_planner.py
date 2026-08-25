@@ -7,7 +7,7 @@ from poh_backlog.model import BacklogItem, Finding
 from poh_backlog.planner import (ALLOWED_OPS, build_plan, plan_to_dict,
                                  read_run_id, render_plan_md)
 
-CATALOG = load_catalog(Path(__file__).parent.parent / "rules" / "catalog.yaml")
+CATALOG = load_catalog(Path(__file__).parent.parent / "poh_backlog" / "data" / "catalog.yaml")
 
 
 def item(id_, updated="2026-08-01T00:00:00+00:00"):

@@ -7,7 +7,7 @@ from poh_backlog.catalog import load_catalog
 from poh_backlog.model import BacklogItem, Finding
 from poh_backlog.planner import build_plan, render_plan_md
 
-CATALOG = load_catalog(Path(__file__).parent.parent / "rules" / "catalog.yaml")
+CATALOG = load_catalog(Path(__file__).parent.parent / "poh_backlog" / "data" / "catalog.yaml")
 
 
 def item(id_):

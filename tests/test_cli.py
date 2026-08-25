@@ -1,4 +1,5 @@
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -291,4 +292,77 @@ def test_run_freely_overwrites_an_untouched_plan_md(workspace):
     # повторных прогонов и cron).
     run_cli(workspace)
     code = run_cli(workspace)
+    assert code == 0
+
+
+def test_run_accepts_now_without_timezone_offset(workspace):
+    # Регрессия B5: --now по умолчанию делается aware (astimezone()), поэтому
+    # именно тот, кто явно передал свой --now без смещения, получал сырой
+    # TypeError на первом же правиле, вычитающем ctx.now из aware updated_at.
+    argv = ["run", "--items", str(workspace / "items.json"),
+            "--state", str(workspace / "state"),
+            "--out", str(workspace / "out"),
+            "--run-id", "2026-08-18-01",
+            "--now", "2026-08-18", "--shadow"]
+    assert main(argv) == 0
+
+
+def test_module_invocation_finds_default_catalog_without_repo_root_data_dirs(tmp_path):
+    # Регрессия B6: PACKAGE_ROOT в cli.py считался как
+    # Path(__file__).resolve().parent.parent, а rules/, prompts/, mappings/ и
+    # schemas/ лежали в корне репозитория — вне пакета poh_backlog. Обычная
+    # (не editable) установка копирует в site-packages/ только сам пакет;
+    # каталоги с данными, лежащие рядом с ним в репозитории, туда не попадают
+    # вообще. Эмулируем именно такую установку: копируем ИЗОЛИРОВАННО только
+    # каталог poh_backlog/ (без rules/, prompts/, mappings/, schemas/
+    # репозитория) в отдельное место и запускаем `-m poh_backlog.cli` оттуда,
+    # с cwd во временном каталоге, где тоже ничего из репозитория нет. Если
+    # дефолтные пути всё ещё считаются от родителя пакета, файла с данными
+    # там не будет и команда упадёт.
+    site_packages = tmp_path / "site-packages"
+    shutil.copytree(ROOT / "poh_backlog", site_packages / "poh_backlog",
+                    ignore=shutil.ignore_patterns("__pycache__"))
+
+    workdir = tmp_path / "cwd"
+    workdir.mkdir()
+    items_path = workdir / "items.json"
+    items_path.write_text(json.dumps([{
+        "id": "S-1", "type": "story", "title": "История",
+        "description": "Достаточно длинное описание истории для проверки пути",
+        "status": "open",
+        "created_at": "2026-01-01T00:00:00+00:00",
+        "updated_at": "2026-08-10T00:00:00+00:00",
+        "labels": ["mvp"], "estimate": 3.0, "parent": None,
+    }], ensure_ascii=False), encoding="utf-8")
+
+    env = {**os.environ, "PYTHONPATH": str(site_packages)}
+    result = subprocess.run(
+        [sys.executable, "-m", "poh_backlog.cli", "run",
+         "--items", "items.json", "--state", "state", "--out", "out",
+         "--run-id", "run-1", "--now", "2026-08-18T00:00:00+00:00", "--shadow"],
+        cwd=workdir, env=env, capture_output=True, text=True, timeout=10,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert (workdir / "out" / "findings.json").exists()
+    assert (workdir / "out" / "plan.json").exists()
+
+
+def test_run_accepts_naive_timestamps_in_items_json(tmp_path):
+    # Регрессия B5: schemas/backlog-item.schema.json типизирует created_at и
+    # updated_at как обычные строки, ничего не нормализуя. Хост-агент вполне
+    # может положить в items.json наивные (без смещения) отметки времени.
+    items_path = tmp_path / "items.json"
+    items_path.write_text(json.dumps([{
+        "id": "S-1", "type": "story", "title": "История",
+        "description": "Не очень длинное описание истории про наивные даты",
+        "status": "open",
+        "created_at": "2026-01-01T00:00:00",
+        "updated_at": "2026-08-10T00:00:00",
+        "labels": ["mvp"], "estimate": 3.0, "parent": None,
+    }], ensure_ascii=False), encoding="utf-8")
+    code = main(["run", "--items", str(items_path),
+                 "--state", str(tmp_path / "state"),
+                 "--out", str(tmp_path / "out"),
+                 "--run-id", "run-1",
+                 "--now", "2026-08-18T00:00:00+00:00", "--shadow"])
     assert code == 0

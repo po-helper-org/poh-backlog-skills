@@ -18,15 +18,20 @@ from poh_backlog.memory import (StateError, append_decisions,
                                 backlog_create_argv,
                                 load_latest_findings_count,
                                 load_latest_snapshot, write_state)
-from poh_backlog.model import BacklogItem
+from poh_backlog.model import BacklogItem, ensure_aware
 from poh_backlog.planner import (Action, Plan, build_plan, plan_to_dict,
                                  read_run_id, render_plan_md)
 from poh_backlog.profile import load_profile
 from poh_backlog.suppress import DecisionsError, is_suppressed, load_suppressions
 
-PACKAGE_ROOT = Path(__file__).resolve().parent.parent
-DEFAULT_CATALOG = PACKAGE_ROOT / "rules" / "catalog.yaml"
-DEFAULT_THRESHOLDS = PACKAGE_ROOT / "rules" / "thresholds.yaml"
+# Каталог самого пакета, а не репозитория: rules/, prompts/, mappings/ и
+# schemas/ раньше лежали в корне репозитория, вне пакета poh_backlog, и
+# обычная (не editable) установка не копировала их в site-packages/ вообще —
+# только сам пакет. Теперь данные лежат внутри пакета (poh_backlog/data/) и
+# разрешаются относительно каталога самого пакета, а не его родителя.
+PACKAGE_ROOT = Path(__file__).resolve().parent
+DEFAULT_CATALOG = PACKAGE_ROOT / "data" / "catalog.yaml"
+DEFAULT_THRESHOLDS = PACKAGE_ROOT / "data" / "thresholds.yaml"
 
 
 def _write(path: Path, text: str) -> None:
@@ -57,7 +62,7 @@ def cmd_run(args: argparse.Namespace) -> int:
             )
             return 2
 
-    now = datetime.fromisoformat(args.now)
+    now = ensure_aware(datetime.fromisoformat(args.now))
     items = _load_items(args.items)
     catalog = load_catalog(args.catalog)
     profile = load_profile(args.thresholds,
@@ -167,7 +172,10 @@ def main(argv: list[str] | None = None) -> int:
     run.add_argument("--out", required=True)
     run.add_argument("--state", required=True)
     run.add_argument("--run-id", required=True)
-    run.add_argument("--now", default=datetime.now().astimezone().isoformat())
+    run.add_argument("--now", default=datetime.now().astimezone().isoformat(),
+                     help="момент времени для аудита в формате ISO 8601; "
+                          "значение без указания часового пояса трактуется "
+                          "как UTC")
     run.add_argument("--profile", default=None)
     run.add_argument("--decisions", default="decisions.yaml")
     run.add_argument("--catalog", default=str(DEFAULT_CATALOG))

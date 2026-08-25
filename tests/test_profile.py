@@ -4,7 +4,7 @@ import pytest
 
 from poh_backlog.profile import Profile, ProfileError, load_profile
 
-DEFAULTS = Path(__file__).parent.parent / "rules" / "thresholds.yaml"
+DEFAULTS = Path(__file__).parent.parent / "poh_backlog" / "data" / "thresholds.yaml"
 
 
 def test_defaults_load():
