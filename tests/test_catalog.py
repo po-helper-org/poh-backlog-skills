@@ -3,7 +3,8 @@ from pathlib import Path
 import pytest
 import yaml
 
-from poh_backlog.catalog import ACTIONS, BUCKETS, SEVERITIES, CatalogError, load_catalog
+from poh_backlog.catalog import (ACTIONS, BUCKETS, EFFECT_MODES, SEVERITIES,
+                                 CatalogError, load_catalog)
 
 REPO_ROOT = Path(__file__).parent.parent
 CATALOG = REPO_ROOT / "poh_backlog" / "data" / "catalog.yaml"
@@ -125,5 +126,47 @@ def test_non_list_root_raises(tmp_path):
 def test_non_mapping_entry_raises(tmp_path):
     bad = tmp_path / "catalog.yaml"
     bad.write_text("- just a string\n- id: X-1\n", encoding="utf-8")
+    with pytest.raises(CatalogError):
+        load_catalog(bad)
+
+
+def test_effect_modes_constant():
+    assert EFFECT_MODES == ("finding_gone", "trace_label")
+
+
+def test_every_rule_declares_known_effect_mode():
+    catalog = load_catalog(CATALOG)
+    for spec in catalog.values():
+        assert spec.expected_effect in EFFECT_MODES, spec.id
+
+
+def test_trace_label_mode_only_for_close_and_drift():
+    catalog = load_catalog(CATALOG)
+    trace = {rid for rid, spec in catalog.items()
+             if spec.expected_effect == "trace_label"}
+    assert trace == {"HYG-STALE-001", "PHS-DRIFT-008"}
+
+
+def test_unknown_effect_mode_raises(tmp_path):
+    bad = tmp_path / "catalog.yaml"
+    bad.write_text(
+        "- id: X-1\n  title: t\n  bucket: update\n  kind: deterministic\n"
+        "  severity: low\n  action: comment\n  maturity: experimental\n"
+        "  expected_effect:\n    mode: teleport\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(CatalogError) as exc:
+        load_catalog(bad)
+    assert "teleport" in str(exc.value)
+
+
+def test_missing_effect_mode_raises(tmp_path):
+    bad = tmp_path / "catalog.yaml"
+    bad.write_text(
+        "- id: X-1\n  title: t\n  bucket: update\n  kind: deterministic\n"
+        "  severity: low\n  action: comment\n  maturity: experimental\n"
+        "  expected_effect: {}\n",
+        encoding="utf-8",
+    )
     with pytest.raises(CatalogError):
         load_catalog(bad)

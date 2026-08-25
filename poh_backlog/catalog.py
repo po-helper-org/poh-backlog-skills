@@ -20,6 +20,15 @@ ACTIONS = (
 )
 SEVERITIES = ("low", "medium", "high")
 
+# Как доказывается, что действие сработало.
+#   finding_gone — правило, породившее находку, при перепрогоне по свежим
+#                  данным её больше не даёт. Правило само себе предикат
+#   trace_label  — доказательством служит метка poh:<rule_id>. Нужен там,
+#                  где исчезновение находки доказало бы не то: комментарий
+#                  обновляет updated_at, и протухшая задача перестаёт быть
+#                  протухшей сама собой
+EFFECT_MODES = ("finding_gone", "trace_label")
+
 
 class CatalogError(Exception):
     """Битая запись каталога."""
@@ -38,6 +47,21 @@ class RuleSpec:
     expected_effect: str | None
 
 
+def _effect_mode(entry: dict[str, Any]) -> str:
+    """Достаёт режим доказательства эффекта из записи каталога."""
+    raw = entry.get("expected_effect")
+    rule_id = entry.get("id", "<без идентификатора>")
+    if not isinstance(raw, dict):
+        raise CatalogError(
+            f"{rule_id}: expected_effect должен быть отображением с ключом mode")
+    mode = raw.get("mode")
+    if mode not in EFFECT_MODES:
+        raise CatalogError(
+            f"{rule_id}: недопустимый режим эффекта {mode!r}; "
+            f"допустимы {', '.join(EFFECT_MODES)}")
+    return mode
+
+
 def _spec(entry: dict[str, Any]) -> RuleSpec:
     try:
         spec = RuleSpec(
@@ -49,7 +73,7 @@ def _spec(entry: dict[str, Any]) -> RuleSpec:
             threshold=entry.get("threshold"),
             action=entry["action"],
             maturity=entry["maturity"],
-            expected_effect=entry.get("expected_effect"),
+            expected_effect=_effect_mode(entry),
         )
     except KeyError as exc:
         raise CatalogError(f"В записи каталога нет обязательного поля: {exc}") from exc
