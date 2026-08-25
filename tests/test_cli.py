@@ -10,6 +10,7 @@ import pytest
 import yaml
 
 from poh_backlog.cli import main
+from poh_backlog.memory import write_verdicts
 
 ROOT = Path(__file__).parent.parent
 FIXTURE = ROOT / "tests" / "fixtures" / "items.json"
@@ -473,3 +474,168 @@ def test_next_run_raises_unexecuted_promise(workspace, capsys):
     plan_md = (workspace / "out2" / "plan.md").read_text(encoding="utf-8")
     assert "Обещано, не сделано" in plan_md
     assert "2026-08-18-01" in plan_md
+
+
+def test_dash_rejection_of_a_promised_action_stops_it_from_returning(workspace):
+    # Финальное ревью, находка 1 (критическая): `[-]` на вернувшемся
+    # обещании должен работать так же, как «отклонено навсегда», а не
+    # только для свежих находок. Раньше `promised_actions` был вторым, не
+    # прогоняемым через is_suppressed входом в plan.actions, и отклонённое
+    # обещание возвращалось на каждом следующем прогоне.
+    run_cli(workspace)
+    key = _tick_first(workspace)
+    main(["approve", "--out", str(workspace / "out"),
+          "--decisions", str(workspace / "decisions.yaml")])
+    after = _items_after(workspace, lambda raw: None)  # host ничего не сделал
+    main(["verify", "--items", str(after), "--out", str(workspace / "out"),
+          "--state", str(workspace / "state"),
+          "--now", "2026-08-18T00:00:00+00:00"])
+
+    # Прогон 2: обещание возвращается с пустой галочкой.
+    code = main(["run", "--items", str(workspace / "items.json"),
+                 "--out", str(workspace / "out2"),
+                 "--state", str(workspace / "state"),
+                 "--run-id", "2026-08-19-01",
+                 "--now", "2026-08-19T00:00:00+00:00",
+                 "--decisions", str(workspace / "decisions.yaml")])
+    assert code == 0
+    plan_md2_path = workspace / "out2" / "plan.md"
+    plan_md2 = plan_md2_path.read_text(encoding="utf-8")
+    assert key in plan_md2
+
+    # Человек отклоняет его навсегда явным `[-]`.
+    plan_md2 = plan_md2.replace(f"- [ ] `{key}`", f"- [-] `{key}`", 1)
+    plan_md2_path.write_text(plan_md2, encoding="utf-8")
+    code = main(["approve", "--out", str(workspace / "out2"),
+                 "--decisions", str(workspace / "decisions.yaml")])
+    assert code == 0
+    decisions = yaml.safe_load(
+        (workspace / "decisions.yaml").read_text(encoding="utf-8"))
+    assert any(e["verdict"] == "rejected" for e in decisions)
+
+    # Прогон 3: обещание не должно вернуться — ни в plan.json, ни в plan.md.
+    code = main(["run", "--items", str(workspace / "items.json"),
+                 "--out", str(workspace / "out3"),
+                 "--state", str(workspace / "state"),
+                 "--run-id", "2026-08-20-01",
+                 "--now", "2026-08-20T00:00:00+00:00",
+                 "--decisions", str(workspace / "decisions.yaml")])
+    assert code == 0
+    plan_md3 = (workspace / "out3" / "plan.md").read_text(encoding="utf-8")
+    assert key not in plan_md3
+
+    plan3 = json.loads((workspace / "out3" / "plan.json").read_text(encoding="utf-8"))
+    assert all(a["action_key"] != key for a in plan3["actions"])
+
+
+def test_promised_action_is_removed_from_deferred_too(workspace):
+    # Финальное ревью, находка 3 (важная): дедупликация обещания раньше
+    # покрывала только plan.actions, а не plan.deferred. Находка, утверждённая
+    # в прошлом прогоне и не исполненная, могла в этом прогоне снова
+    # сработать и уйти за потолок max_actions_per_run — план одновременно
+    # называл её и «обещано, не сделано» (пустая галочка), и «отложено
+    # потолком», хотя это одно и то же действие с одинаковым action_key.
+    profile_path = workspace / "profile.yaml"
+    profile_path.write_text("plan:\n  max_actions_per_run: 1\n", encoding="utf-8")
+
+    # Прогон 0 с тем же потолком — чтобы узнать реальный action_key находки,
+    # которая уйдёт в deferred.
+    code = main(["run", "--items", str(workspace / "items.json"),
+                 "--out", str(workspace / "out0"),
+                 "--state", str(workspace / "state"),
+                 "--run-id", "2026-08-17-01",
+                 "--now", "2026-08-18T00:00:00+00:00",
+                 "--profile", str(profile_path), "--shadow"])
+    assert code == 0
+    plan0 = json.loads((workspace / "out0" / "plan.json").read_text(encoding="utf-8"))
+    assert plan0["deferred"], "тесту нужна находка, ушедшая в deferred"
+    deferred_action = plan0["deferred"][0]
+
+    # Подсаживаем в память прогонов «обещание»: как будто эту же пару
+    # (rule_id, item_id) уже утверждали раньше, а host не исполнил.
+    write_verdicts(workspace / "state", "2026-08-16-01", [{
+        "action_key": "0" * 16,
+        "rule_id": deferred_action["rule_id"],
+        "item_id": deferred_action["item_id"],
+        "op": deferred_action["op"],
+        "status": "not_applied",
+        "note": "тест: имитация неисполненного обещания",
+        "rationale": "тест",
+    }], [])
+
+    code = main(["run", "--items", str(workspace / "items.json"),
+                 "--out", str(workspace / "out1"),
+                 "--state", str(workspace / "state"),
+                 "--run-id", "2026-08-18-01",
+                 "--now", "2026-08-18T00:00:00+00:00",
+                 "--profile", str(profile_path), "--shadow"])
+    assert code == 0
+    plan1 = json.loads((workspace / "out1" / "plan.json").read_text(encoding="utf-8"))
+
+    action_key = deferred_action["action_key"]
+    in_actions = [a for a in plan1["actions"] if a["action_key"] == action_key]
+    in_deferred = [a for a in plan1["deferred"] if a["action_key"] == action_key]
+    assert len(in_actions) == 1
+    assert in_actions[0]["promised_from"] is not None
+    assert in_deferred == []
+
+    plan_md1 = (workspace / "out1" / "plan.md").read_text(encoding="utf-8")
+    assert plan_md1.count(action_key) == 1
+
+
+def test_promise_survives_a_verify_where_nothing_was_approved(workspace):
+    # Финальное ревью, находка 2 (критическая): verdicts.json — снимок
+    # последнего прогона, а не накопительный журнал. Утверждают действие,
+    # host ничего не делает, verify пишет not_applied; следующий прогон
+    # возвращает его как обещание, человек оставляет пустую галочку
+    # (документированное «отложить — вернётся в следующий прогон»), approve
+    # ничего не утверждает, verify пишет verdicts.json = [] — и обещание
+    # бесследно исчезает, хотя его никто не отклонял и не подавлял.
+    run_cli(workspace)
+    key = _tick_first(workspace)
+    main(["approve", "--out", str(workspace / "out"),
+          "--decisions", str(workspace / "decisions.yaml")])
+    after = _items_after(workspace, lambda raw: None)
+    main(["verify", "--items", str(after), "--out", str(workspace / "out"),
+          "--state", str(workspace / "state"),
+          "--now", "2026-08-18T00:00:00+00:00"])
+
+    # Прогон 2: обещание возвращается, человек ничего не отмечает.
+    code = main(["run", "--items", str(workspace / "items.json"),
+                 "--out", str(workspace / "out2"),
+                 "--state", str(workspace / "state"),
+                 "--run-id", "2026-08-19-01",
+                 "--now", "2026-08-19T00:00:00+00:00",
+                 "--decisions", str(workspace / "decisions.yaml")])
+    assert code == 0
+    plan_md2 = (workspace / "out2" / "plan.md").read_text(encoding="utf-8")
+    assert key in plan_md2
+    assert "Обещано, не сделано" in plan_md2
+
+    code = main(["approve", "--out", str(workspace / "out2"),
+                 "--decisions", str(workspace / "decisions.yaml")])
+    assert code == 0
+    approved2 = json.loads((workspace / "out2" / "approved.json").read_text(encoding="utf-8"))
+    assert approved2 == []
+
+    after2 = _items_after(workspace, lambda raw: None)
+    code = main(["verify", "--items", str(after2), "--out", str(workspace / "out2"),
+                 "--state", str(workspace / "state"),
+                 "--now", "2026-08-19T00:00:00+00:00",
+                 "--decisions", str(workspace / "decisions.yaml")])
+    assert code == 0
+    verdicts2 = json.loads(
+        (workspace / "state" / "2026-08-19-01" / "verdicts.json").read_text(encoding="utf-8"))
+    assert verdicts2 != [], "verdicts.json не должен пустеть, когда никто ничего не утверждал"
+
+    # Прогон 3: обещание всё ещё должно быть в плане.
+    code = main(["run", "--items", str(workspace / "items.json"),
+                 "--out", str(workspace / "out3"),
+                 "--state", str(workspace / "state"),
+                 "--run-id", "2026-08-20-01",
+                 "--now", "2026-08-20T00:00:00+00:00",
+                 "--decisions", str(workspace / "decisions.yaml")])
+    assert code == 0
+    plan_md3 = (workspace / "out3" / "plan.md").read_text(encoding="utf-8")
+    assert "Обещано, не сделано" in plan_md3
+    assert key in plan_md3

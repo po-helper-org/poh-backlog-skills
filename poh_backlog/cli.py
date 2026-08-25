@@ -15,7 +15,7 @@ from poh_backlog.catalog import load_catalog
 from poh_backlog.diff import (detect_phase_drift, diff_snapshots,
                               render_report_md, take_snapshot)
 from poh_backlog.memory import (StateError, append_decisions,
-                                backlog_create_argv,
+                                backlog_create_argv, carry_forward_verdicts,
                                 load_latest_findings_count,
                                 load_latest_snapshot, load_latest_verdicts,
                                 write_state, write_verdicts)
@@ -23,7 +23,8 @@ from poh_backlog.model import BacklogItem, ensure_aware
 from poh_backlog.planner import (Action, Plan, build_plan, plan_to_dict,
                                  promised_actions, read_run_id, render_plan_md)
 from poh_backlog.profile import load_profile
-from poh_backlog.suppress import DecisionsError, is_suppressed, load_suppressions
+from poh_backlog.suppress import (DecisionsError, is_pair_suppressed,
+                                  is_suppressed, load_suppressions)
 from poh_backlog.verify import render_verify_md, verdicts_to_dicts, verify_actions
 
 # Каталог самого пакета, а не репозитория: rules/, prompts/, mappings/ и
@@ -115,9 +116,22 @@ def cmd_run(args: argparse.Namespace) -> int:
     verdicts_run_id, verdicts = load_latest_verdicts(Path(args.state))
     promised = promised_actions(verdicts, catalog, by_id,
                                 verdicts_run_id or args.run_id)
+    # Единственный гейт подавления (см. комментарий выше про findings) обязан
+    # закрывать и этот, второй вход в plan.actions: без этой фильтрации явный
+    # `[-]` на вернувшемся обещании ничего не значил — approve писал в
+    # decisions.yaml подавление, но promised_actions его не читает, и
+    # отклонённое навсегда действие возвращалось на каждом следующем прогоне.
+    promised = [a for a in promised
+               if not is_pair_suppressed(a.rule_id, a.item_id, suppressions, today)]
     promised_keys = {a.action_key for a in promised}
+    # Дедупликация против deferred, а не только против actions: находка,
+    # утверждённая раньше и не исполненная, могла в этом прогоне снова
+    # сработать и попасть за потолок max_actions_per_run — без вычёркивания
+    # из deferred план одновременно называл её и «обещано, не сделано» с
+    # пустой галочкой, и «отложено потолком», хотя это одно и то же действие.
     fresh = [a for a in plan.actions if a.action_key not in promised_keys]
-    plan = replace(plan, actions=promised + fresh)
+    fresh_deferred = [a for a in plan.deferred if a.action_key not in promised_keys]
+    plan = replace(plan, actions=promised + fresh, deferred=fresh_deferred)
 
     _write(out / "findings.json",
            json.dumps(findings_to_dicts(findings), ensure_ascii=False, indent=2) + "\n")
@@ -227,6 +241,8 @@ def cmd_verify(args: argparse.Namespace) -> int:
     catalog = load_catalog(args.catalog)
     profile = load_profile(args.thresholds,
                            Path(args.profile) if args.profile else None)
+    suppressions = load_suppressions(Path(args.decisions))
+    today = now.date()
 
     state_dir = Path(args.state) / run_id
     snapshot_path = state_dir / "items.snapshot.json"
@@ -234,9 +250,22 @@ def cmd_verify(args: argparse.Namespace) -> int:
     if snapshot_path.exists():
         prev_snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
 
+    # Журнал обещаний — до записи вердиктов этого прогона: load_latest_verdicts
+    # смотрит на последний прогон, где verdicts.json вообще писался, а этот
+    # прогон свой ещё не записал, так что это ровно прошлое состояние
+    # журнала.
+    _, previous_verdicts = load_latest_verdicts(Path(args.state))
+
     result = verify_actions(approved, items, catalog, profile, now, prev_snapshot)
     _write(out / "verify.md", render_verify_md(result, run_id))
-    write_verdicts(Path(args.state), run_id, verdicts_to_dicts(result.verdicts),
+
+    # Журнал накопительный, а не снимок: пара из прошлого прогона, которую
+    # approved.json этого прогона не покрыл, переносится как есть — иначе
+    # прогон, где approve ничего не утвердил, стирает обещание, которое
+    # никто не отклонял и не подавлял (финальное ревью, находка 2).
+    carried = carry_forward_verdicts(previous_verdicts, approved, suppressions, today)
+    ledger = verdicts_to_dicts(result.verdicts) + carried
+    write_verdicts(Path(args.state), run_id, ledger,
                    [v.action_key for v in result.verdicts if v.status == "done"])
 
     percent = round(result.fidelity * 100)
@@ -284,6 +313,9 @@ def main(argv: list[str] | None = None) -> int:
     verify_cmd.add_argument("--now", default=datetime.now().astimezone().isoformat(),
                             help="момент проверки; без смещения трактуется как UTC")
     verify_cmd.add_argument("--profile", default=None)
+    verify_cmd.add_argument("--decisions", default="decisions.yaml",
+                            help="нужен для переноса и подавления пар в "
+                                 "накопительном журнале обещаний (verdicts.json)")
     verify_cmd.add_argument("--catalog", default=str(DEFAULT_CATALOG))
     verify_cmd.add_argument("--thresholds", default=str(DEFAULT_THRESHOLDS))
     verify_cmd.set_defaults(func=cmd_verify)

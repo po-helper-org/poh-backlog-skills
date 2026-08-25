@@ -8,11 +8,12 @@ from __future__ import annotations
 import json
 import os
 import tempfile
+from datetime import date
 from pathlib import Path
 
 import yaml
 
-from poh_backlog.suppress import DecisionsError
+from poh_backlog.suppress import DecisionsError, Suppression, is_pair_suppressed
 
 STAGES = ("audit", "diff", "plan", "approve", "apply", "verify", "snapshot")
 
@@ -136,6 +137,37 @@ def load_latest_verdicts(root: Path) -> tuple[str | None, list[dict]]:
         return None, []
     path, verdicts = loaded
     return path.parent.name, verdicts
+
+
+def carry_forward_verdicts(previous: list[dict], approved: list[dict],
+                           suppressions: list[Suppression],
+                           today: date) -> list[dict]:
+    """Переносит в вердикты этого прогона нерешённые пары из прошлого.
+
+    verdicts.json — накопительный журнал обещаний, а не снимок последнего
+    прогона: прогон, в котором approve ничего не утвердил (approved.json
+    пуст), не должен стирать пары, за которыми ещё числится решение. Пара
+    умирает только тремя способами — вердикт `done`, явный отказ `[-]`
+    (уходит в decisions.yaml как подавление) или истечение обычного
+    подавления по сроку; пустой approved.json среди них не значится.
+
+    Пара, которую approved.json этого прогона покрывает, не переносится:
+    `verify_actions` уже посчитает по ней свежий вердикт, и дублировать
+    старую запись рядом со свежей нельзя.
+    """
+    approved_pairs = {(entry["rule_id"], entry["item_id"]) for entry in approved}
+    carried: list[dict] = []
+    for verdict in previous:
+        if verdict.get("status") == "done":
+            continue
+        pair = (verdict["rule_id"], verdict["item_id"])
+        if pair in approved_pairs:
+            continue
+        if is_pair_suppressed(verdict["rule_id"], verdict["item_id"],
+                              suppressions, today):
+            continue
+        carried.append(verdict)
+    return carried
 
 
 def backlog_create_argv(run_id: str, state_dir: Path) -> list[str]:

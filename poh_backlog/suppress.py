@@ -77,16 +77,32 @@ def _as_date(value, position: int, path: Path) -> date:
         ) from exc
 
 
-def is_suppressed(finding: Finding, suppressions: list[Suppression], today: date) -> bool:
-    """Подавлена ли находка на указанную дату.
+def is_pair_suppressed(rule_id: str, item_id: str, suppressions: list[Suppression],
+                       today: date) -> bool:
+    """Подавлена ли пара (rule_id, item_id) на указанную дату.
+
+    Единственная реализация гейта подавления. И свежая находка (через
+    `is_suppressed`), и вернувшееся, но не сделанное обещание обязаны
+    проходить именно через эту функцию — иначе у отклонённого навсегда
+    появляется второй, непроверяемый вход обратно в план.
 
     Подавление с датой действует включительно по названный день: если
-    человек написал `suppress_until: 2026-12-01`, находка остаётся
-    подавленной весь этот день и возвращается только начиная со следующего.
+    человек написал `suppress_until: 2026-12-01`, пара остаётся подавленной
+    весь этот день и возвращается только начиная со следующего.
     """
     for sup in suppressions:
-        if sup.rule_id != finding.rule_id or sup.item_id != finding.item_id:
+        if sup.rule_id != rule_id or sup.item_id != item_id:
             continue
         if sup.until is None or today <= sup.until:
             return True
     return False
+
+
+def is_suppressed(finding: Finding, suppressions: list[Suppression], today: date) -> bool:
+    """Подавлена ли находка на указанную дату.
+
+    Тонкая обёртка над `is_pair_suppressed`: находка — лишь один из двух
+    источников пар (rule_id, item_id), которым может грозить подавление;
+    второй — вернувшиеся обещания (см. `poh_backlog.cli.cmd_run`).
+    """
+    return is_pair_suppressed(finding.rule_id, finding.item_id, suppressions, today)

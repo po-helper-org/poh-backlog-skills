@@ -210,3 +210,28 @@ def test_plan_md_renders_promised_section_with_checkboxes():
     assert "Обещано, не сделано" in text
     assert "2026-08-25-01" in text
     assert text.count("- [ ] ") == 2
+
+
+VERDICTS_WITH_RATIONALE = [
+    {"action_key": "x" * 16, "rule_id": "HYG-EST-003", "item_id": "S-1",
+     "op": "update_field", "status": "not_applied",
+     "rationale": "Нет оценки: элемент не проходит Definition of Ready",
+     "note": "Нет следа исполнения: метка poh:HYG-EST-003 отсутствует"},
+]
+
+
+def test_promised_actions_keeps_original_rationale_with_note_suffix():
+    # Финальное ревью, находка 4: изначальная причина находки не должна
+    # подменяться служебной заметкой verify — обе должны присутствовать.
+    items = {"S-1": item("S-1")}
+    result = promised_actions(VERDICTS_WITH_RATIONALE, CATALOG, items, run_id="r1")
+    assert "Нет оценки: элемент не проходит Definition of Ready" in result[0].rationale
+    assert "Нет следа исполнения: метка poh:HYG-EST-003 отсутствует" in result[0].rationale
+
+
+def test_promised_actions_falls_back_to_generic_rationale_without_verdict_field():
+    # Обратная совместимость: verdicts.json прошлых версий не содержит поле
+    # rationale — деградация не должна ронять код, просто теряется контекст.
+    items = {"S-1": item("S-1"), "S-2": item("S-2"), "S-3": item("S-3")}
+    result = promised_actions(VERDICTS, CATALOG, items, run_id="2026-08-25-01")
+    assert result[0].rationale  # не пусто, есть разумный дефолт

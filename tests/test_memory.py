@@ -1,4 +1,5 @@
 import json
+from datetime import date
 from pathlib import Path
 
 import pytest
@@ -6,9 +7,10 @@ import yaml
 
 from poh_backlog.memory import (STAGES, StateError, append_decisions,
                                 backlog_check_ac_argv, backlog_create_argv,
-                                load_latest_findings_count, load_latest_snapshot,
-                                load_latest_verdicts, write_state, write_verdicts)
-from poh_backlog.suppress import DecisionsError
+                                carry_forward_verdicts, load_latest_findings_count,
+                                load_latest_snapshot, load_latest_verdicts,
+                                write_state, write_verdicts)
+from poh_backlog.suppress import DecisionsError, Suppression
 
 
 def test_stages_match_spec():
@@ -197,3 +199,62 @@ def test_broken_verdicts_file_raises_state_error(tmp_path):
     with pytest.raises(StateError) as exc:
         load_latest_verdicts(tmp_path)
     assert "verdicts.json" in str(exc.value)
+
+
+# --- carry_forward_verdicts: журнал обещаний накопительный, а не снимок ---
+# Финальное ревью, находка 2 (критическая): verdicts.json прошлого прогона
+# терялся целиком, если в этом прогоне approved.json пуст (никто ничего не
+# утвердил). Обещание должно умереть только от done, явного отказа [-]
+# (подавления) или подавления по сроку — но не от пустого файла.
+
+TODAY = date(2026, 8, 19)
+
+
+def _verdict(rule_id="HYG-EST-003", item_id="S-1", status="not_applied"):
+    return {"action_key": "a" * 16, "rule_id": rule_id, "item_id": item_id,
+           "op": "update_field", "status": status, "note": "тест",
+           "rationale": "тест"}
+
+
+def test_carry_forward_keeps_unresolved_pair_not_covered_by_approved():
+    previous = [_verdict()]
+    carried = carry_forward_verdicts(previous, approved=[], suppressions=[],
+                                     today=TODAY)
+    assert carried == previous
+
+
+def test_carry_forward_drops_pair_covered_by_this_run_approved():
+    previous = [_verdict()]
+    approved = [{"rule_id": "HYG-EST-003", "item_id": "S-1"}]
+    carried = carry_forward_verdicts(previous, approved, suppressions=[], today=TODAY)
+    assert carried == []
+
+
+def test_carry_forward_drops_done_verdicts():
+    previous = [_verdict(status="done")]
+    carried = carry_forward_verdicts(previous, approved=[], suppressions=[],
+                                     today=TODAY)
+    assert carried == []
+
+
+def test_carry_forward_drops_suppressed_pair():
+    previous = [_verdict()]
+    suppressions = [Suppression("HYG-EST-003", "S-1", None)]
+    carried = carry_forward_verdicts(previous, approved=[],
+                                     suppressions=suppressions, today=TODAY)
+    assert carried == []
+
+
+def test_carry_forward_ignores_expired_dated_suppression():
+    previous = [_verdict()]
+    suppressions = [Suppression("HYG-EST-003", "S-1", date(2026, 1, 1))]
+    carried = carry_forward_verdicts(previous, approved=[],
+                                     suppressions=suppressions, today=TODAY)
+    assert carried == previous
+
+
+def test_carry_forward_keeps_unrelated_pairs_untouched():
+    previous = [_verdict(item_id="S-1"), _verdict(item_id="S-2")]
+    approved = [{"rule_id": "HYG-EST-003", "item_id": "S-1"}]
+    carried = carry_forward_verdicts(previous, approved, suppressions=[], today=TODAY)
+    assert [v["item_id"] for v in carried] == ["S-2"]

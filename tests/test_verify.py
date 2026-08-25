@@ -138,7 +138,17 @@ def test_verdicts_to_dicts_is_json_ready():
     after = [item(labels=("poh:HYG-EST-003",), estimate=5.0)]
     result = verify_actions(approved(), after, CATALOG, PROFILE, NOW, None)
     entry = verdicts_to_dicts(result.verdicts)[0]
-    assert set(entry) == {"action_key", "rule_id", "item_id", "op", "status", "note"}
+    assert set(entry) == {"action_key", "rule_id", "item_id", "op", "status", "note",
+                          "rationale"}
+
+
+def test_verdict_carries_original_rationale_from_approved_entry():
+    # Финальное ревью, находка 4: причина, по которой действие вообще
+    # предложили, не должна теряться при проверке — иначе следующий прогон
+    # просит новое решение по строке без обоснования.
+    after = [item(labels=("poh:HYG-EST-003",), estimate=5.0)]
+    result = verify_actions(approved(), after, CATALOG, PROFILE, NOW, None)
+    assert result.verdicts[0].rationale == "тест"
 
 
 def test_verify_md_contains_counts_and_collateral():

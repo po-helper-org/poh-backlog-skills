@@ -32,6 +32,12 @@ class Verdict:
     op: str
     status: str
     note: str
+    # Исходное обоснование действия (Action.rationale из approved.json), а не
+    # заметка о проверке: без него promised_actions вынужден подменять
+    # причину, по которой действие вообще предложили, служебной строкой
+    # verify — «утверждено в прогоне r1 — Нет следа исполнения: ...» вместо
+    # изначального «Нет оценки: элемент не проходит Definition of Ready».
+    rationale: str = ""
 
 
 @dataclass(frozen=True)
@@ -86,12 +92,14 @@ def verify_actions(approved: list[dict], items: list[BacklogItem],
         item_id = entry["item_id"]
         label = entry.get("trace_label") or trace_label(rule_id)
         item = by_id.get(item_id)
+        rationale = entry.get("rationale", "")
 
         if item is None:
             verdicts.append(Verdict(
                 action_key=entry["action_key"], rule_id=rule_id, item_id=item_id,
                 op=entry["op"], status="not_applied",
                 note="Элемент не найден в свежем срезе беклога",
+                rationale=rationale,
             ))
             continue
 
@@ -100,6 +108,7 @@ def verify_actions(approved: list[dict], items: list[BacklogItem],
                 action_key=entry["action_key"], rule_id=rule_id, item_id=item_id,
                 op=entry["op"], status="not_applied",
                 note=f"Нет следа исполнения: метка {label} отсутствует",
+                rationale=rationale,
             ))
             continue
 
@@ -108,7 +117,7 @@ def verify_actions(approved: list[dict], items: list[BacklogItem],
         verdicts.append(Verdict(
             action_key=entry["action_key"], rule_id=rule_id, item_id=item_id,
             op=entry["op"], status="done" if reached else "no_effect",
-            note=note,
+            note=note, rationale=rationale,
         ))
 
     targets = {entry["item_id"] for entry in approved}

@@ -125,13 +125,21 @@ def promised_actions(verdicts: list[dict], catalog: dict[str, RuleSpec],
             continue
         item = items.get(item_id)
         revision = item.updated_at.isoformat() if item else "unknown"
+        # Исходная причина, по которой действие вообще предложили (см. finding
+        # 4 финального ревью): она должна дойти до человека вместе с заметкой
+        # verify о том, почему подтверждение не засчиталось, а не вместо неё.
+        # Старые verdicts.json без поля rationale деградируют на дефолт, а не
+        # падают.
+        original = verdict.get("rationale") or "Утверждено ранее, но не исполнено"
+        note = verdict.get("note")
+        rationale = f"{original} — {note}" if note else original
         result.append(Action(
             action_key=_action_key(rule_id, item_id, revision),
             rule_id=rule_id,
             item_id=item_id,
             bucket=spec.bucket,
             op=spec.action,
-            rationale=verdict.get("note", "Утверждено ранее, но не исполнено"),
+            rationale=rationale,
             expected_effect=spec.expected_effect,
             trace_label=trace_label(rule_id),
             promised_from=run_id,
