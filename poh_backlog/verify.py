@@ -39,6 +39,10 @@ class VerifyResult:
     verdicts: list[Verdict] = field(default_factory=list)
     collateral: list[str] = field(default_factory=list)
     fidelity: float = 0.0
+    # Была ли вообще выполнена сверка побочного урона: без снимка «до»
+    # сравнивать не с чем, и пустой result.collateral в этом случае значит
+    # не «ничего лишнего не изменилось», а «сравнение не проводилось».
+    collateral_checked: bool = False
 
 
 NOTE_EFFECT_CONFIRMED = "Действие исполнено, эффект подтверждён"
@@ -116,7 +120,8 @@ def verify_actions(approved: list[dict], items: list[BacklogItem],
     done = sum(1 for v in verdicts if v.status == "done")
     fidelity = done / len(verdicts) if verdicts else 0.0
     return VerifyResult(verdicts=verdicts, collateral=collateral,
-                        fidelity=fidelity)
+                        fidelity=fidelity,
+                        collateral_checked=prev_snapshot is not None)
 
 
 def verdicts_to_dicts(verdicts: list[Verdict]) -> list[dict]:
@@ -154,7 +159,12 @@ def render_verify_md(result: VerifyResult, run_id: str) -> str:
 
     lines.append(f"## Изменено вне плана ({len(result.collateral)})")
     lines.append("")
-    if result.collateral:
+    if not result.collateral_checked:
+        lines.append(
+            "Снимок «до» не найден: сравнение с текущим срезом беклога "
+            "пропущено, этот раздел ничего не доказывает."
+        )
+    elif result.collateral:
         lines.append(
             "Эти элементы изменились, не будучи целями утверждённых действий. "
             "Беклог живёт своей жизнью, поэтому это предупреждение, а не ошибка."

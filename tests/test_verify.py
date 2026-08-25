@@ -150,3 +150,32 @@ def test_verify_md_contains_counts_and_collateral():
     assert "2026-08-26-01" in text
     assert "Достоверность исполнения: 100%" in text
     assert "S-2" in text
+
+
+def test_collateral_checked_flag_true_with_previous_snapshot():
+    before = take_snapshot([item("S-1")])
+    after = [item("S-1", labels=("poh:HYG-EST-003",), estimate=5.0)]
+    result = verify_actions(approved(), after, CATALOG, PROFILE, NOW, before)
+    assert result.collateral_checked is True
+
+
+def test_collateral_checked_flag_false_without_previous_snapshot():
+    after = [item("S-1", labels=("poh:HYG-EST-003",), estimate=5.0)]
+    result = verify_actions(approved(), after, CATALOG, PROFILE, NOW, None)
+    assert result.collateral_checked is False
+
+
+def test_verify_md_keeps_current_wording_when_collateral_checked_and_clean():
+    before = take_snapshot([item("S-1")])
+    after = [item("S-1", labels=("poh:HYG-EST-003",), estimate=5.0)]
+    result = verify_actions(approved(), after, CATALOG, PROFILE, NOW, before)
+    text = render_verify_md(result, run_id="2026-08-26-01")
+    assert "Изменений вне списка целей не обнаружено." in text
+
+
+def test_verify_md_reports_skipped_collateral_check_without_snapshot():
+    after = [item("S-1", labels=("poh:HYG-EST-003",), estimate=5.0)]
+    result = verify_actions(approved(), after, CATALOG, PROFILE, NOW, None)
+    text = render_verify_md(result, run_id="2026-08-26-01")
+    assert "не обнаружено" not in text
+    assert "снимок" in text.lower() and "пропущен" in text.lower()

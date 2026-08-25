@@ -178,7 +178,24 @@ def cmd_verify(args: argparse.Namespace) -> int:
         return 2
 
     approved = json.loads(approved_path.read_text(encoding="utf-8"))
-    plan_data = json.loads(plan_json_path.read_text(encoding="utf-8"))
+
+    if not plan_json_path.exists():
+        print(
+            f"{plan_json_path} не найден: определить run_id для проверки "
+            f"нечем. Сначала выполните 'run' для этого прогона.",
+            file=sys.stderr,
+        )
+        return 2
+    try:
+        plan_data = json.loads(plan_json_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        print(
+            f"{plan_json_path} повреждён (некорректный JSON): проверка "
+            f"отменена.",
+            file=sys.stderr,
+        )
+        return 2
+
     run_id = plan_data.get("run_id")
     if not run_id:
         print(f"{plan_json_path} не содержит run_id; проверка отменена.",

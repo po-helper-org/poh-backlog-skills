@@ -421,3 +421,34 @@ def test_verify_without_approved_exits_with_code_2(workspace, capsys):
                  "--now", "2026-08-18T00:00:00+00:00"])
     assert code == 2
     assert "approved.json" in capsys.readouterr().err
+
+
+def test_verify_without_plan_json_exits_with_code_2(workspace, capsys):
+    # Регрессия: approved.json был защищён проверкой существования, а
+    # plan.json читался безусловно — отсутствие файла роняло traceback
+    # вместо понятного сообщения с кодом 2.
+    run_cli(workspace)
+    _tick_first(workspace)
+    main(["approve", "--out", str(workspace / "out"),
+          "--decisions", str(workspace / "decisions.yaml")])
+    (workspace / "out" / "plan.json").unlink()
+    code = main(["verify", "--items", str(workspace / "items.json"),
+                 "--out", str(workspace / "out"),
+                 "--state", str(workspace / "state"),
+                 "--now", "2026-08-18T00:00:00+00:00"])
+    assert code == 2
+    assert "plan.json" in capsys.readouterr().err
+
+
+def test_verify_with_invalid_plan_json_exits_with_code_2(workspace, capsys):
+    run_cli(workspace)
+    _tick_first(workspace)
+    main(["approve", "--out", str(workspace / "out"),
+          "--decisions", str(workspace / "decisions.yaml")])
+    (workspace / "out" / "plan.json").write_text("{не json", encoding="utf-8")
+    code = main(["verify", "--items", str(workspace / "items.json"),
+                 "--out", str(workspace / "out"),
+                 "--state", str(workspace / "state"),
+                 "--now", "2026-08-18T00:00:00+00:00"])
+    assert code == 2
+    assert "plan.json" in capsys.readouterr().err
