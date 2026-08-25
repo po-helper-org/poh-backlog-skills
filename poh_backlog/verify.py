@@ -38,12 +38,33 @@ class Verdict:
     # verify — «утверждено в прогоне r1 — Нет следа исполнения: ...» вместо
     # изначального «Нет оценки: элемент не проходит Definition of Ready».
     rationale: str = ""
+    # Прогон, в котором человек утвердил это действие. Проставляется здесь
+    # же, при создании вердикта, значением run_id этого вызова
+    # verify_actions — approve и verify всегда работают с одним и тем же
+    # прогоном. Дальше запись может пережить один или несколько переносов в
+    # накопительном журнале (см. memory.carry_forward_verdicts), которые
+    # копируют её как есть и не трогают это поле — иначе оно бы каждый раз
+    # лгало, называя прогон, где запись просто продолжает лежать, а не
+    # прогон, где её утвердили (финальное ревью 2a, находка 3).
+    promised_from: str | None = None
 
 
 @dataclass(frozen=True)
 class VerifyResult:
     verdicts: list[Verdict] = field(default_factory=list)
+    # Изменённые вне плана элементы — как и раньше.
     collateral: list[str] = field(default_factory=list)
+    # Появившиеся и исчезнувшие вне плана элементы — отдельные группы:
+    # финальное ревью 2a, находка 1. `collateral` строился только из
+    # DiffReport.changed, а added/removed молча отбрасывались, из-за чего
+    # host, удаливший или создавший элемент мимо утверждённых действий,
+    # получал чистый отчёт именно в разделе, чья задача — ловить такое.
+    # Удаление особенно важно: это единственное, чего нет в словаре
+    # допустимых действий (ACTIONS), поэтому оно не может быть целью ни
+    # одного утверждённого действия и должно быть самым заметным сигналом
+    # здесь, а не самым незаметным.
+    collateral_added: list[str] = field(default_factory=list)
+    collateral_removed: list[str] = field(default_factory=list)
     fidelity: float = 0.0
     # Была ли вообще выполнена сверка побочного урона: без снимка «до»
     # сравнивать не с чем, и пустой result.collateral в этом случае значит
@@ -55,6 +76,10 @@ NOTE_EFFECT_CONFIRMED = "Действие исполнено, эффект по�
 NOTE_FINDING_SURVIVES = "След есть, но находка сохраняется: результата нет"
 NOTE_RULE_NOT_EXECUTED = (
     "Правило не исполняется в этом срезе, поэтому эффект проверить нечем"
+)
+NOTE_RULE_MISSING_FROM_CATALOG = (
+    "Правило отсутствует в каталоге на момент проверки, поэтому эффект "
+    "проверить нечем"
 )
 
 
@@ -82,7 +107,8 @@ def _effect_reached(rule_id: str, item: BacklogItem, ctx, mode: str) -> tuple[bo
 
 def verify_actions(approved: list[dict], items: list[BacklogItem],
                    catalog: dict[str, RuleSpec], profile: Profile,
-                   now: datetime, prev_snapshot: dict | None) -> VerifyResult:
+                   now: datetime, prev_snapshot: dict | None,
+                   run_id: str | None = None) -> VerifyResult:
     ctx = build_context(items, profile, now)
     by_id = ctx.items
     verdicts: list[Verdict] = []
@@ -99,7 +125,7 @@ def verify_actions(approved: list[dict], items: list[BacklogItem],
                 action_key=entry["action_key"], rule_id=rule_id, item_id=item_id,
                 op=entry["op"], status="not_applied",
                 note="Элемент не найден в свежем срезе беклога",
-                rationale=rationale,
+                rationale=rationale, promised_from=run_id,
             ))
             continue
 
@@ -108,27 +134,48 @@ def verify_actions(approved: list[dict], items: list[BacklogItem],
                 action_key=entry["action_key"], rule_id=rule_id, item_id=item_id,
                 op=entry["op"], status="not_applied",
                 note=f"Нет следа исполнения: метка {label} отсутствует",
-                rationale=rationale,
+                rationale=rationale, promised_from=run_id,
             ))
             continue
 
-        mode = catalog[rule_id].expected_effect
+        # Правило могло исчезнуть из каталога между утверждением и проверкой
+        # (финальное ревью 2a, находка 2): catalog[rule_id] уронил бы
+        # KeyError вместо явного вердикта. Метка на месте, но без каталога
+        # неизвестен даже режим доказательства эффекта — утверждать «done»
+        # нельзя, поэтому это no_effect с честной причиной.
+        spec = catalog.get(rule_id)
+        if spec is None:
+            verdicts.append(Verdict(
+                action_key=entry["action_key"], rule_id=rule_id, item_id=item_id,
+                op=entry["op"], status="no_effect",
+                note=NOTE_RULE_MISSING_FROM_CATALOG,
+                rationale=rationale, promised_from=run_id,
+            ))
+            continue
+
+        mode = spec.expected_effect
         reached, note = _effect_reached(rule_id, item, ctx, mode)
         verdicts.append(Verdict(
             action_key=entry["action_key"], rule_id=rule_id, item_id=item_id,
             op=entry["op"], status="done" if reached else "no_effect",
-            note=note, rationale=rationale,
+            note=note, rationale=rationale, promised_from=run_id,
         ))
 
     targets = {entry["item_id"] for entry in approved}
     collateral: list[str] = []
+    collateral_added: list[str] = []
+    collateral_removed: list[str] = []
     if prev_snapshot is not None:
-        changed = diff_snapshots(prev_snapshot, take_snapshot(items)).changed
-        collateral = sorted(set(changed) - targets)
+        diff = diff_snapshots(prev_snapshot, take_snapshot(items))
+        collateral = sorted(set(diff.changed) - targets)
+        collateral_added = sorted(set(diff.added) - targets)
+        collateral_removed = sorted(set(diff.removed) - targets)
 
     done = sum(1 for v in verdicts if v.status == "done")
     fidelity = done / len(verdicts) if verdicts else 0.0
     return VerifyResult(verdicts=verdicts, collateral=collateral,
+                        collateral_added=collateral_added,
+                        collateral_removed=collateral_removed,
                         fidelity=fidelity,
                         collateral_checked=prev_snapshot is not None)
 
@@ -145,14 +192,22 @@ STATUS_TITLES = {
 
 
 def render_verify_md(result: VerifyResult, run_id: str) -> str:
-    percent = round(result.fidelity * 100)
     lines = [
         f"# Проверка исполнения, прогон {run_id}",
         "",
         f"Действий проверено: {len(result.verdicts)}",
-        f"Достоверность исполнения: {percent}%",
-        "",
     ]
+    if result.verdicts:
+        percent = round(result.fidelity * 100)
+        lines.append(f"Достоверность исполнения: {percent}%")
+    else:
+        # Финальное ревью 2a, находка 4: ноль утверждённых действий — это
+        # «проверять было нечего», а не 0% достоверности. Рядом с «Действий
+        # проверено: 0» процент читается как «host всё провалил».
+        lines.append(
+            "Утверждённых действий в этом прогоне не было — проверять нечего."
+        )
+    lines.append("")
     for status in STATUSES:
         group = [v for v in result.verdicts if v.status == status]
         if not group:
@@ -166,21 +221,44 @@ def render_verify_md(result: VerifyResult, run_id: str) -> str:
             )
         lines.append("")
 
-    lines.append(f"## Изменено вне плана ({len(result.collateral)})")
+    total_outside_plan = (len(result.collateral) + len(result.collateral_added)
+                         + len(result.collateral_removed))
+    lines.append(f"## Изменено вне плана ({total_outside_plan})")
     lines.append("")
     if not result.collateral_checked:
         lines.append(
             "Снимок «до» не найден: сравнение с текущим срезом беклога "
             "пропущено, этот раздел ничего не доказывает."
         )
-    elif result.collateral:
+    elif total_outside_plan:
         lines.append(
-            "Эти элементы изменились, не будучи целями утверждённых действий. "
-            "Беклог живёт своей жизнью, поэтому это предупреждение, а не ошибка."
+            "Эти элементы изменились, появились или исчезли, не будучи "
+            "целями утверждённых действий. Беклог живёт своей жизнью, "
+            "поэтому это предупреждение, а не ошибка."
         )
         lines.append("")
-        for item_id in result.collateral:
-            lines.append(f"- `{item_id}`")
+        # Появление и исчезновение — не то же самое, что изменение поля, и
+        # называются отдельными группами (финальное ревью 2a, находка 1):
+        # удаление особенно важно показать явно, поскольку это единственное
+        # действие вне словаря допустимых операций пакета.
+        if result.collateral:
+            lines.append(f"### Изменено ({len(result.collateral)})")
+            lines.append("")
+            for item_id in result.collateral:
+                lines.append(f"- `{item_id}`")
+            lines.append("")
+        if result.collateral_added:
+            lines.append(f"### Появилось ({len(result.collateral_added)})")
+            lines.append("")
+            for item_id in result.collateral_added:
+                lines.append(f"- `{item_id}`")
+            lines.append("")
+        if result.collateral_removed:
+            lines.append(f"### Исчезло ({len(result.collateral_removed)})")
+            lines.append("")
+            for item_id in result.collateral_removed:
+                lines.append(f"- `{item_id}`")
+            lines.append("")
     else:
         lines.append("Изменений вне списка целей не обнаружено.")
     lines.append("")

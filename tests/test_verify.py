@@ -120,6 +120,56 @@ def test_collateral_empty_without_previous_snapshot():
     assert result.collateral == []
 
 
+def test_collateral_added_lists_items_created_outside_the_plan():
+    # Финальное ревью 2a, находка 1: host, создавший элемент, которого никто
+    # не утверждал, должен быть пойман, а не получить чистый отчёт.
+    before = take_snapshot([item("S-1")])
+    after = [item("S-1", labels=("poh:HYG-EST-003",), estimate=5.0), item("S-9")]
+    result = verify_actions(approved(), after, CATALOG, PROFILE, NOW, before)
+    assert result.collateral_added == ["S-9"]
+    assert result.collateral == []
+    assert result.collateral_removed == []
+
+
+def test_collateral_removed_lists_items_deleted_outside_the_plan():
+    # Финальное ревью 2a, находка 1: удаление — единственное, что вне
+    # словаря допустимых действий, поэтому самое важное для отлова здесь.
+    before = take_snapshot([item("S-1"), item("S-9")])
+    after = [item("S-1", labels=("poh:HYG-EST-003",), estimate=5.0)]
+    result = verify_actions(approved(), after, CATALOG, PROFILE, NOW, before)
+    assert result.collateral_removed == ["S-9"]
+    assert result.collateral == []
+    assert result.collateral_added == []
+
+
+def test_collateral_added_and_removed_empty_without_previous_snapshot():
+    after = [item(labels=("poh:HYG-EST-003",), estimate=5.0)]
+    result = verify_actions(approved(), after, CATALOG, PROFILE, NOW, None)
+    assert result.collateral_added == []
+    assert result.collateral_removed == []
+
+
+def test_collateral_excludes_targets_of_approved_actions_from_all_groups():
+    # Цель утверждённого действия не должна попасть в «вне плана», даже если
+    # это удаление, а не просто изменение поля.
+    before = take_snapshot([item("S-1")])
+    after: list = []  # S-1 был целью propose_close и исчез — это ожидаемо
+    result = verify_actions(approved(rule_id="HYG-STALE-001", op="propose_close"),
+                            after, CATALOG, PROFILE, NOW, before)
+    assert "S-1" not in result.collateral_removed
+
+
+def test_verify_md_reports_added_and_removed_as_separate_named_groups():
+    before = take_snapshot([item("S-1"), item("S-9")])
+    after = [item("S-1", labels=("poh:HYG-EST-003",), estimate=5.0), item("S-2")]
+    result = verify_actions(approved(), after, CATALOG, PROFILE, NOW, before)
+    text = render_verify_md(result, run_id="2026-08-26-01")
+    assert "S-2" in text
+    assert "S-9" in text
+    # Разные события — разные разделы, а не смешанный список.
+    assert text.index("S-9") != text.index("S-2")
+
+
 def test_fidelity_on_mixed_verdicts():
     actions = approved() + approved(item_id="S-2")
     after = [item("S-1", labels=("poh:HYG-EST-003",), estimate=5.0),
@@ -139,7 +189,17 @@ def test_verdicts_to_dicts_is_json_ready():
     result = verify_actions(approved(), after, CATALOG, PROFILE, NOW, None)
     entry = verdicts_to_dicts(result.verdicts)[0]
     assert set(entry) == {"action_key", "rule_id", "item_id", "op", "status", "note",
-                          "rationale"}
+                          "rationale", "promised_from"}
+
+
+def test_verdict_promised_from_defaults_to_the_run_verify_was_called_with():
+    # Финальное ревью 2a, находка 3: вердикт, только что созданный проверкой,
+    # обязан помнить прогон, в котором он появился — именно от этого прогона
+    # promised_actions потом узнаёт, где утвердили действие.
+    after = [item(labels=("mvp",), estimate=5.0)]  # метки нет — not_applied
+    result = verify_actions(approved(), after, CATALOG, PROFILE, NOW, None,
+                            run_id="2026-08-18-01")
+    assert result.verdicts[0].promised_from == "2026-08-18-01"
 
 
 def test_verdict_carries_original_rationale_from_approved_entry():
@@ -189,3 +249,26 @@ def test_verify_md_reports_skipped_collateral_check_without_snapshot():
     text = render_verify_md(result, run_id="2026-08-26-01")
     assert "не обнаружено" not in text
     assert "снимок" in text.lower() and "пропущен" in text.lower()
+
+
+def test_no_effect_verdict_when_rule_missing_from_catalog():
+    # Финальное ревью 2a, находка 2: правило могло исчезнуть из каталога
+    # между утверждением и проверкой. catalog[rule_id] уронил бы KeyError;
+    # должен быть явный вердикт, а не крэш.
+    after = [item(labels=("poh:HYG-EST-003", "mvp"), estimate=5.0)]
+    catalog_without_rule = {k: v for k, v in CATALOG.items() if k != "HYG-EST-003"}
+    result = verify_actions(approved(), after, catalog_without_rule, PROFILE, NOW, None)
+    assert result.verdicts[0].status in STATUSES
+    assert result.verdicts[0].status != "done"
+    assert "каталог" in result.verdicts[0].note.lower()
+
+
+def test_render_verify_md_states_no_actions_instead_of_percent_when_nothing_verified():
+    # Финальное ревью 2a, находка 4: 0 из 0 — это не 0%, это «нечего было
+    # проверять». Рядом с «Действий проверено: 0» процент читается как
+    # «host всё провалил», хотя утверждать нечего было вовсе.
+    result = verify_actions([], [item()], CATALOG, PROFILE, NOW, None)
+    text = render_verify_md(result, run_id="2026-08-26-01")
+    assert "Действий проверено: 0" in text
+    assert "%" not in text
+    assert "нечего" in text.lower() or "не было" in text.lower()

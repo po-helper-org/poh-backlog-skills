@@ -44,7 +44,9 @@ class RuleSpec:
     threshold: str | None
     action: str
     maturity: str
-    expected_effect: str | None
+    # Всегда один из EFFECT_MODES: _effect_mode() либо возвращает валидный
+    # режим, либо роняет CatalogError — значения None здесь не бывает.
+    expected_effect: str
 
 
 def _effect_mode(entry: dict[str, Any]) -> str:

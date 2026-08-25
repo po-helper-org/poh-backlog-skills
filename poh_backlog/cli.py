@@ -47,6 +47,37 @@ def _load_items(path: Path) -> list[BacklogItem]:
     return [BacklogItem.from_dict(entry) for entry in raw]
 
 
+# Поля, которые poh_backlog.verify.verify_actions индексирует напрямую
+# (entry["rule_id"], entry["item_id"], entry["action_key"], entry["op"]) без
+# .get(): approved.json правится руками так же, как plan.json, и запись без
+# одного из этих полей реалистична (усечённый файл, неполная ручная правка).
+# Без этой проверки такая запись роняла бы сырой KeyError вместо понятного
+# сообщения с кодом 2 (финальное ревью 2a, находка 2).
+REQUIRED_APPROVED_FIELDS = ("action_key", "rule_id", "item_id", "op")
+
+
+def _validate_approved(path: Path, approved) -> str | None:
+    """Проверяет структуру approved.json; None означает «всё в порядке».
+
+    Возвращает готовую строку сообщения об ошибке, называющую конкретную
+    проблемную запись, а не индекс безымянного списка — так же, как прочие
+    диагностики CLI над человеко-редактируемыми файлами.
+    """
+    if not isinstance(approved, list):
+        return (f"{path} должен быть списком записей, а не "
+                f"{type(approved).__name__}: проверка отменена.")
+    for index, entry in enumerate(approved):
+        if not isinstance(entry, dict):
+            return (f"{path}: запись №{index} должна быть словарём, а не "
+                    f"{type(entry).__name__}: проверка отменена.")
+        missing = [key for key in REQUIRED_APPROVED_FIELDS if key not in entry]
+        if missing:
+            label = entry.get("action_key") or entry.get("item_id") or f"№{index}"
+            return (f"{path}: запись {label} не содержит обязательных полей "
+                    f"{', '.join(missing)}: проверка отменена.")
+    return None
+
+
 def cmd_run(args: argparse.Namespace) -> int:
     out = Path(args.out)
     plan_md_path = out / "plan.md"
@@ -211,7 +242,24 @@ def cmd_verify(args: argparse.Namespace) -> int:
         )
         return 2
 
-    approved = json.loads(approved_path.read_text(encoding="utf-8"))
+    # approved.json лежит в том же человеко-редактируемом out/, что и
+    # plan.md — битый JSON здесь реалистичен так же, как для plan.json, и
+    # README обещает тот же код 2 с одной понятной строкой, а не сырой
+    # traceback (финальное ревью 2a, находка 2).
+    try:
+        approved = json.loads(approved_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        print(
+            f"{approved_path} повреждён (некорректный JSON): проверка "
+            f"отменена.",
+            file=sys.stderr,
+        )
+        return 2
+
+    error = _validate_approved(approved_path, approved)
+    if error is not None:
+        print(error, file=sys.stderr)
+        return 2
 
     if not plan_json_path.exists():
         print(
@@ -256,26 +304,38 @@ def cmd_verify(args: argparse.Namespace) -> int:
     # журнала.
     _, previous_verdicts = load_latest_verdicts(Path(args.state))
 
-    result = verify_actions(approved, items, catalog, profile, now, prev_snapshot)
+    result = verify_actions(approved, items, catalog, profile, now, prev_snapshot,
+                            run_id)
     _write(out / "verify.md", render_verify_md(result, run_id))
 
     # Журнал накопительный, а не снимок: пара из прошлого прогона, которую
     # approved.json этого прогона не покрыл, переносится как есть — иначе
     # прогон, где approve ничего не утвердил, стирает обещание, которое
-    # никто не отклонял и не подавлял (финальное ревью, находка 2).
+    # никто не отклонял и не подавлял (финальное ревью, находка 2). Каждый
+    # свежий вердикт уже несёт свой promised_from = run_id (см.
+    # verify.verify_actions), а перенесённые записи хранят его же, но из
+    # прогона, где действие утвердили изначально — carry_forward_verdicts
+    # копирует их как есть, не трогая поле (финальное ревью 2a, находка 3).
     carried = carry_forward_verdicts(previous_verdicts, approved, suppressions, today)
     ledger = verdicts_to_dicts(result.verdicts) + carried
     write_verdicts(Path(args.state), run_id, ledger,
                    [v.action_key for v in result.verdicts if v.status == "done"])
 
-    percent = round(result.fidelity * 100)
     print(f"Проверка прогона {run_id}")
     print(f"Действий проверено: {len(result.verdicts)}")
-    print(f"Достоверность исполнения: {percent}%")
+    if result.verdicts:
+        percent = round(result.fidelity * 100)
+        print(f"Достоверность исполнения: {percent}%")
+    else:
+        # Финальное ревью 2a, находка 4: 0 из 0 — не 0%, а «нечего было
+        # проверять». См. тот же довод в verify.render_verify_md.
+        print("Утверждённых действий в этом прогоне не было — проверять нечего.")
     if prev_snapshot is None:
         print("Снимок «до» не найден: раздел побочного урона пропущен")
     else:
-        print(f"Изменено вне плана: {len(result.collateral)}")
+        total_outside_plan = (len(result.collateral) + len(result.collateral_added)
+                             + len(result.collateral_removed))
+        print(f"Изменено вне плана: {total_outside_plan}")
     return 0
 
 

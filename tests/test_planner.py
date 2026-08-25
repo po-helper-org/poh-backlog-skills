@@ -1,12 +1,13 @@
 from pathlib import Path
+from typing import get_type_hints
 
 from dataclasses import replace
 
 from poh_backlog.catalog import load_catalog
 from poh_backlog.model import BacklogItem, Finding
-from poh_backlog.planner import (ALLOWED_OPS, Plan, build_plan, plan_to_dict,
-                                 promised_actions, read_run_id, render_plan_md,
-                                 trace_label)
+from poh_backlog.planner import (ALLOWED_OPS, Action, Plan, build_plan,
+                                 plan_to_dict, promised_actions, read_run_id,
+                                 render_plan_md, trace_label)
 
 CATALOG = load_catalog(Path(__file__).parent.parent / "poh_backlog" / "data" / "catalog.yaml")
 
@@ -235,3 +236,36 @@ def test_promised_actions_falls_back_to_generic_rationale_without_verdict_field(
     items = {"S-1": item("S-1"), "S-2": item("S-2"), "S-3": item("S-3")}
     result = promised_actions(VERDICTS, CATALOG, items, run_id="2026-08-25-01")
     assert result[0].rationale  # не пусто, есть разумный дефолт
+
+
+def test_promised_actions_prefers_verdict_own_origin_run_over_the_passed_run_id():
+    # Финальное ревью 2a, находка 3: после переноса вердикт из прошлого
+    # хопа уже несёт свой собственный promised_from (прогон, где действие
+    # утвердили). Он не должен затираться run_id прогона, где просто лежит
+    # текущий verdicts.json — иначе поле будет врать на каждом хопе переноса.
+    verdicts_with_origin = [{
+        "action_key": "x" * 16, "rule_id": "HYG-EST-003", "item_id": "S-1",
+        "op": "update_field", "status": "not_applied", "note": "нет следа",
+        "promised_from": "2026-08-18-01",
+    }]
+    items = {"S-1": item("S-1")}
+    # run_id здесь — прогон, где сейчас физически лежит verdicts.json
+    # (например, после второго хопа переноса), а не прогон утверждения.
+    result = promised_actions(verdicts_with_origin, CATALOG, items,
+                              run_id="2026-08-20-01")
+    assert result[0].promised_from == "2026-08-18-01"
+
+
+def test_promised_actions_falls_back_to_run_id_when_verdict_has_no_origin():
+    # Обратная совместимость: старые verdicts.json без promised_from
+    # деградируют на переданный run_id, как и раньше.
+    items = {f"S-{i}": item(f"S-{i}") for i in (1, 2, 3)}
+    result = promised_actions(VERDICTS, CATALOG, items, run_id="2026-08-25-01")
+    assert all(a.promised_from == "2026-08-25-01" for a in result)
+
+
+def test_action_expected_effect_annotation_is_always_a_mode():
+    # Находка 5: после валидации каталога значение всегда один из двух
+    # режимов, а не Optional — аннотация должна отражать эту гарантию.
+    hints = get_type_hints(Action)
+    assert hints["expected_effect"] is str

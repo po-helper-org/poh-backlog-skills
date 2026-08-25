@@ -1,13 +1,21 @@
 from pathlib import Path
+from typing import get_type_hints
 
 import pytest
 import yaml
 
 from poh_backlog.catalog import (ACTIONS, BUCKETS, EFFECT_MODES, SEVERITIES,
-                                 CatalogError, load_catalog)
+                                 CatalogError, RuleSpec, load_catalog)
 
 REPO_ROOT = Path(__file__).parent.parent
 CATALOG = REPO_ROOT / "poh_backlog" / "data" / "catalog.yaml"
+
+
+def test_rule_spec_expected_effect_annotation_is_always_a_mode():
+    # Находка 5 финального ревью 2a: _effect_mode либо возвращает один из
+    # EFFECT_MODES, либо роняет CatalogError — значение никогда не None.
+    hints = get_type_hints(RuleSpec)
+    assert hints["expected_effect"] is str
 
 EXPECTED_IDS = {
     "HYG-STALE-001", "HYG-DESC-002", "HYG-EST-003", "HYG-ORPHAN-004",

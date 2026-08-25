@@ -40,7 +40,13 @@ class Action:
     bucket: str
     op: str
     rationale: str
-    expected_effect: str | None
+    # Всегда один из EFFECT_MODES каталога (finding_gone/trace_label), никогда
+    # None: RuleSpec.expected_effect уже гарантирует это после валидации
+    # каталога. Внутри пакета поле нигде не читается — verify.py берёт режим
+    # заново из catalog.py в момент проверки, а не из этого поля, — но оно не
+    # мёртвое: approved.json уходит host-агенту, и это единственное место,
+    # где режим доказательства эффекта виден снаружи пакета.
+    expected_effect: str
     trace_label: str = ""
     # Прогон, в котором действие уже утверждали, если оно вернулось как
     # неисполненное. None означает, что действие пришло из свежей находки.
@@ -133,6 +139,15 @@ def promised_actions(verdicts: list[dict], catalog: dict[str, RuleSpec],
         original = verdict.get("rationale") or "Утверждено ранее, но не исполнено"
         note = verdict.get("note")
         rationale = f"{original} — {note}" if note else original
+        # Финальное ревью 2a, находка 3: журнал вердиктов накопительный —
+        # запись, дошедшая сюда, могла уже пережить один или несколько
+        # переносов (carry_forward_verdicts). Она несёт собственный
+        # promised_from, записанный verify.verify_actions в момент, когда
+        # человек утвердил действие впервые. Этот прогон (run_id) — это лишь
+        # тот, где сейчас физически лежит verdicts.json; предпочитаем
+        # собственное происхождение записи и берём run_id только как
+        # запасной вариант для записей старого формата, где поля ещё нет.
+        promised_from = verdict.get("promised_from") or run_id
         result.append(Action(
             action_key=_action_key(rule_id, item_id, revision),
             rule_id=rule_id,
@@ -142,7 +157,7 @@ def promised_actions(verdicts: list[dict], catalog: dict[str, RuleSpec],
             rationale=rationale,
             expected_effect=spec.expected_effect,
             trace_label=trace_label(rule_id),
-            promised_from=run_id,
+            promised_from=promised_from,
         ))
     return result
 

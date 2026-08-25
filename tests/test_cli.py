@@ -639,3 +639,121 @@ def test_promise_survives_a_verify_where_nothing_was_approved(workspace):
     plan_md3 = (workspace / "out3" / "plan.md").read_text(encoding="utf-8")
     assert "Обещано, не сделано" in plan_md3
     assert key in plan_md3
+
+
+def test_promised_from_stays_the_original_approval_run_across_two_carry_forward_hops(workspace):
+    # Финальное ревью 2a, находка 3: после того как обещание пережило уже
+    # один перенос в накопительном журнале (прогон 2 ничего не утвердил и
+    # ничего не исполнил), третий прогон не должен подменить прогон
+    # утверждения на прогон 2 — человек утвердил действие в прогоне 1, и
+    # именно это должно остаться написанным в плане прогона 3.
+    run_cli(workspace)  # прогон 1: 2026-08-18-01
+    key = _tick_first(workspace)
+    main(["approve", "--out", str(workspace / "out"),
+          "--decisions", str(workspace / "decisions.yaml")])
+    after = _items_after(workspace, lambda raw: None)  # host ничего не сделал
+    main(["verify", "--items", str(after), "--out", str(workspace / "out"),
+          "--state", str(workspace / "state"),
+          "--now", "2026-08-18T00:00:00+00:00"])
+
+    # Прогон 2: обещание возвращается с указанием прогона 1; человек снова
+    # ничего не решает, host снова ничего не делает — verdicts.json прогона 2
+    # окажется переносом записи прогона 1.
+    code = main(["run", "--items", str(workspace / "items.json"),
+                 "--out", str(workspace / "out2"),
+                 "--state", str(workspace / "state"),
+                 "--run-id", "2026-08-19-01",
+                 "--now", "2026-08-19T00:00:00+00:00",
+                 "--decisions", str(workspace / "decisions.yaml")])
+    assert code == 0
+    plan_md2 = (workspace / "out2" / "plan.md").read_text(encoding="utf-8")
+    assert "утверждено в прогоне 2026-08-18-01" in plan_md2
+
+    code = main(["approve", "--out", str(workspace / "out2"),
+                 "--decisions", str(workspace / "decisions.yaml")])
+    assert code == 0
+    after2 = _items_after(workspace, lambda raw: None)
+    code = main(["verify", "--items", str(after2), "--out", str(workspace / "out2"),
+                 "--state", str(workspace / "state"),
+                 "--now", "2026-08-19T00:00:00+00:00",
+                 "--decisions", str(workspace / "decisions.yaml")])
+    assert code == 0
+    verdicts2 = json.loads(
+        (workspace / "state" / "2026-08-19-01" / "verdicts.json").read_text(encoding="utf-8"))
+    assert verdicts2, "к прогону 3 обещание обязано дожить"
+
+    # Прогон 3: план обязан по-прежнему называть прогон 1, а не прогон 2 —
+    # прогон 2 лишь хранил перенесённую запись, утверждения там не было.
+    code = main(["run", "--items", str(workspace / "items.json"),
+                 "--out", str(workspace / "out3"),
+                 "--state", str(workspace / "state"),
+                 "--run-id", "2026-08-20-01",
+                 "--now", "2026-08-20T00:00:00+00:00",
+                 "--decisions", str(workspace / "decisions.yaml")])
+    assert code == 0
+    plan_md3 = (workspace / "out3" / "plan.md").read_text(encoding="utf-8")
+    assert "Обещано, не сделано" in plan_md3
+    assert "утверждено в прогоне 2026-08-18-01" in plan_md3
+    assert "утверждено в прогоне 2026-08-19-01" not in plan_md3
+
+
+def test_verify_with_invalid_approved_json_exits_with_code_2(workspace, capsys):
+    # Находка 2 финального ревью 2a: approved.json лежит в том же
+    # человеко-редактируемом out/, что и plan.md — битый JSON не должен
+    # ронять сырой traceback.
+    run_cli(workspace)
+    _tick_first(workspace)
+    main(["approve", "--out", str(workspace / "out"),
+          "--decisions", str(workspace / "decisions.yaml")])
+    (workspace / "out" / "approved.json").write_text("{не json", encoding="utf-8")
+    code = main(["verify", "--items", str(workspace / "items.json"),
+                 "--out", str(workspace / "out"),
+                 "--state", str(workspace / "state"),
+                 "--now", "2026-08-18T00:00:00+00:00"])
+    assert code == 2
+    assert "approved.json" in capsys.readouterr().err
+
+
+def test_verify_with_malformed_approved_entry_exits_with_code_2(workspace, capsys):
+    # Находка 2: запись approved.json без обязательных полей (rule_id,
+    # item_id, action_key, op) индексируется напрямую в verify.py и
+    # planner.py — должна давать читаемую ошибку, называющую проблему, а не
+    # сырой KeyError.
+    run_cli(workspace)
+    _tick_first(workspace)
+    main(["approve", "--out", str(workspace / "out"),
+          "--decisions", str(workspace / "decisions.yaml")])
+    approved_path = workspace / "out" / "approved.json"
+    broken = json.loads(approved_path.read_text(encoding="utf-8"))
+    del broken[0]["op"]
+    approved_path.write_text(json.dumps(broken, ensure_ascii=False), encoding="utf-8")
+
+    code = main(["verify", "--items", str(workspace / "items.json"),
+                 "--out", str(workspace / "out"),
+                 "--state", str(workspace / "state"),
+                 "--now", "2026-08-18T00:00:00+00:00"])
+    assert code == 2
+    err = capsys.readouterr().err
+    assert "approved.json" in err
+    assert "op" in err
+
+
+def test_verify_says_nothing_to_check_instead_of_percent_when_nothing_approved(workspace, capsys):
+    # Находка 4 финального ревью 2a: 0 из 0 не равно 0% — рядом с «Действий
+    # проверено: 0» процент читается так, будто host всё провалил.
+    run_cli(workspace)
+    code = main(["approve", "--out", str(workspace / "out"),
+                 "--decisions", str(workspace / "decisions.yaml")])
+    assert code == 0
+    approved = json.loads((workspace / "out" / "approved.json").read_text(encoding="utf-8"))
+    assert approved == []
+
+    code = main(["verify", "--items", str(workspace / "items.json"),
+                 "--out", str(workspace / "out"),
+                 "--state", str(workspace / "state"),
+                 "--now", "2026-08-18T00:00:00+00:00"])
+    assert code == 0
+    out_text = capsys.readouterr().out
+    assert "%" not in out_text
+    verify_md = (workspace / "out" / "verify.md").read_text(encoding="utf-8")
+    assert "%" not in verify_md
