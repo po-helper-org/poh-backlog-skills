@@ -41,16 +41,33 @@ class VerifyResult:
     fidelity: float = 0.0
 
 
-def _effect_reached(rule_id: str, item: BacklogItem, ctx, mode: str) -> bool:
+NOTE_EFFECT_CONFIRMED = "Действие исполнено, эффект подтверждён"
+NOTE_FINDING_SURVIVES = "След есть, но находка сохраняется: результата нет"
+NOTE_RULE_NOT_EXECUTED = (
+    "Правило не исполняется в этом срезе, поэтому эффект проверить нечем"
+)
+
+
+def _effect_reached(rule_id: str, item: BacklogItem, ctx, mode: str) -> tuple[bool, str]:
+    """Возвращает (эффект подтверждён, пояснение для итоговой заметки).
+
+    Пояснение различает две причины, по которым эффект не подтверждён:
+    правило перепрогнали и находка сохранилась — или перепрогнать было
+    нечем, и об исполнении вообще ничего не известно.
+    """
     if mode == "trace_label":
         # Метка уже проверена вызывающим: для этого режима она и есть эффект.
-        return True
+        return True, NOTE_EFFECT_CONFIRMED
     fn = RULES.get(rule_id)
     if fn is None:
         # Правило объявлено в каталоге, но реализации нет (например,
-        # правило-суждение). Перепрогнать нечем — считаем эффект недоказанным.
-        return False
-    return not fn(item, ctx)
+        # правило-суждение). Перепрогнать нечем, поэтому нельзя утверждать
+        # ни что эффект достигнут, ни что находка проверена и сохранилась.
+        return False, NOTE_RULE_NOT_EXECUTED
+    findings = fn(item, ctx)
+    if len(findings) == 0:
+        return True, NOTE_EFFECT_CONFIRMED
+    return False, NOTE_FINDING_SURVIVES
 
 
 def verify_actions(approved: list[dict], items: list[BacklogItem],
@@ -83,18 +100,12 @@ def verify_actions(approved: list[dict], items: list[BacklogItem],
             continue
 
         mode = catalog[rule_id].expected_effect
-        if _effect_reached(rule_id, item, ctx, mode):
-            verdicts.append(Verdict(
-                action_key=entry["action_key"], rule_id=rule_id, item_id=item_id,
-                op=entry["op"], status="done",
-                note="Действие исполнено, эффект подтверждён",
-            ))
-        else:
-            verdicts.append(Verdict(
-                action_key=entry["action_key"], rule_id=rule_id, item_id=item_id,
-                op=entry["op"], status="no_effect",
-                note="След есть, но находка сохраняется: результата нет",
-            ))
+        reached, note = _effect_reached(rule_id, item, ctx, mode)
+        verdicts.append(Verdict(
+            action_key=entry["action_key"], rule_id=rule_id, item_id=item_id,
+            op=entry["op"], status="done" if reached else "no_effect",
+            note=note,
+        ))
 
     targets = {entry["item_id"] for entry in approved}
     collateral: list[str] = []

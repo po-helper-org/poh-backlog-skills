@@ -66,6 +66,25 @@ def test_not_applied_when_item_vanished():
     assert "не найден" in result.verdicts[0].note
 
 
+def test_no_effect_note_is_honest_when_rule_has_no_implementation():
+    # PHS-MVP-003 — правило-суждение, его никто не регистрирует в RULES.
+    # Перепрогнать нечем, поэтому вердикт не должен утверждать, что находка
+    # проверена и сохранилась: это было бы неправдой.
+    after = [item(labels=("poh:PHS-MVP-003", "mvp"))]
+    result = verify_actions(approved(rule_id="PHS-MVP-003"), after, CATALOG,
+                            PROFILE, NOW, None)
+    assert result.verdicts[0].status == "no_effect"
+    assert "не исполняется в этом срезе" in result.verdicts[0].note
+    assert "сохраняется" not in result.verdicts[0].note
+
+
+def test_no_effect_note_stays_honest_when_rule_reruns_and_finding_survives():
+    after = [item(labels=("poh:HYG-EST-003", "mvp"), estimate=None)]
+    result = verify_actions(approved(), after, CATALOG, PROFILE, NOW, None)
+    assert result.verdicts[0].status == "no_effect"
+    assert result.verdicts[0].note == "След есть, но находка сохраняется: результата нет"
+
+
 def test_trace_label_mode_needs_only_the_label():
     # HYG-STALE-001 работает в режиме trace_label: находка может остаться,
     # но метка есть — значит действие исполнено.
