@@ -105,6 +105,40 @@ def build_plan(findings: list[Finding], catalog: dict[str, RuleSpec],
     return Plan(actions=actions[:max_actions], deferred=actions[max_actions:])
 
 
+def promised_actions(verdicts: list[dict], catalog: dict[str, RuleSpec],
+                     items: dict[str, BacklogItem], run_id: str) -> list[Action]:
+    """Действия, которые человек утвердил, а host не довёл до эффекта.
+
+    Возвращаются в план следующего прогона с пустой галочкой: одно
+    утверждение не может действовать вечно, поэтому нужно новое решение.
+    Ключ пересчитывается по текущему состоянию элемента — старый ключ
+    относился к той ревизии, которой уже нет.
+    """
+    result: list[Action] = []
+    for verdict in verdicts:
+        if verdict.get("status") == "done":
+            continue
+        rule_id = verdict["rule_id"]
+        item_id = verdict["item_id"]
+        spec = catalog.get(rule_id)
+        if spec is None:
+            continue
+        item = items.get(item_id)
+        revision = item.updated_at.isoformat() if item else "unknown"
+        result.append(Action(
+            action_key=_action_key(rule_id, item_id, revision),
+            rule_id=rule_id,
+            item_id=item_id,
+            bucket=spec.bucket,
+            op=spec.action,
+            rationale=verdict.get("note", "Утверждено ранее, но не исполнено"),
+            expected_effect=spec.expected_effect,
+            trace_label=trace_label(rule_id),
+            promised_from=run_id,
+        ))
+    return result
+
+
 def read_run_id(plan_md: str) -> str | None:
     """Читает машиночитаемую метку прогона, которую пишет `render_plan_md`.
 
@@ -134,8 +168,27 @@ def render_plan_md(plan: Plan, run_id: str) -> str:
         f"Отложено до следующего прогона: {len(plan.deferred)}",
         "",
     ]
+    promised = [a for a in plan.actions if a.promised_from is not None]
+    fresh = [a for a in plan.actions if a.promised_from is None]
+
+    if promised:
+        lines.append(f"## Обещано, не сделано ({len(promised)})")
+        lines.append("")
+        lines.append(
+            "Эти действия человек уже утверждал, но эффекта не случилось. "
+            "Утверждение не действует вечно — нужно новое решение."
+        )
+        lines.append("")
+        for action in promised:
+            lines.append(
+                f"- [ ] `{action.action_key}` **{action.rule_id}** "
+                f"{action.item_id} — {action.op} — утверждено в прогоне "
+                f"{action.promised_from} — {_single_line(action.rationale)}"
+            )
+        lines.append("")
+
     by_bucket: dict[str, list[Action]] = {}
-    for action in plan.actions:
+    for action in fresh:
         by_bucket.setdefault(action.bucket, []).append(action)
 
     for bucket, bucket_actions in by_bucket.items():

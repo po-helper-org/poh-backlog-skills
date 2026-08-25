@@ -452,3 +452,24 @@ def test_verify_with_invalid_plan_json_exits_with_code_2(workspace, capsys):
                  "--now", "2026-08-18T00:00:00+00:00"])
     assert code == 2
     assert "plan.json" in capsys.readouterr().err
+
+
+def test_next_run_raises_unexecuted_promise(workspace, capsys):
+    run_cli(workspace)
+    _tick_first(workspace)
+    main(["approve", "--out", str(workspace / "out"),
+          "--decisions", str(workspace / "decisions.yaml")])
+    after = _items_after(workspace, lambda raw: None)
+    main(["verify", "--items", str(after), "--out", str(workspace / "out"),
+          "--state", str(workspace / "state"),
+          "--now", "2026-08-18T00:00:00+00:00"])
+    code = main(["run", "--items", str(workspace / "items.json"),
+                 "--out", str(workspace / "out2"),
+                 "--state", str(workspace / "state"),
+                 "--run-id", "2026-08-19-01",
+                 "--now", "2026-08-19T00:00:00+00:00",
+                 "--decisions", str(workspace / "decisions.yaml")])
+    assert code == 0
+    plan_md = (workspace / "out2" / "plan.md").read_text(encoding="utf-8")
+    assert "Обещано, не сделано" in plan_md
+    assert "2026-08-18-01" in plan_md

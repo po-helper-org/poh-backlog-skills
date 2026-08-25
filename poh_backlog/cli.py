@@ -17,11 +17,11 @@ from poh_backlog.diff import (detect_phase_drift, diff_snapshots,
 from poh_backlog.memory import (StateError, append_decisions,
                                 backlog_create_argv,
                                 load_latest_findings_count,
-                                load_latest_snapshot, write_state,
-                                write_verdicts)
+                                load_latest_snapshot, load_latest_verdicts,
+                                write_state, write_verdicts)
 from poh_backlog.model import BacklogItem, ensure_aware
 from poh_backlog.planner import (Action, Plan, build_plan, plan_to_dict,
-                                 read_run_id, render_plan_md)
+                                 promised_actions, read_run_id, render_plan_md)
 from poh_backlog.profile import load_profile
 from poh_backlog.suppress import DecisionsError, is_suppressed, load_suppressions
 from poh_backlog.verify import render_verify_md, verdicts_to_dicts, verify_actions
@@ -102,6 +102,23 @@ def cmd_run(args: argparse.Namespace) -> int:
     # довериться собственному, отдельно переданному флагу (B2, B4).
     plan = replace(plan, run_id=args.run_id, shadow=args.shadow)
 
+    # Неисполненное с прошлой проверки возвращается в план: действие, которое
+    # PO утвердил и которое никто не сделал, иначе теряется бесследно.
+    # Дедупликация по ключу: если та же находка пришла и свежей (а это
+    # рутинный случай — host ничего не менял, элемент той же ревизии, значит
+    # правило перепрогонится на те же rule_id/item_id/revision и даст тот же
+    # action_key), действие не должно задвоиться. Побеждает обещанная копия,
+    # а не свежая: только у неё есть promised_from, без которого «Обещано,
+    # не сделано» не покажет, что решение уже когда-то принималось.
+    # promised_from должен указывать на прогон, где действие утверждали, а не
+    # на текущий, поэтому идентификатор берётся из той же пары, что и вердикты.
+    verdicts_run_id, verdicts = load_latest_verdicts(Path(args.state))
+    promised = promised_actions(verdicts, catalog, by_id,
+                                verdicts_run_id or args.run_id)
+    promised_keys = {a.action_key for a in promised}
+    fresh = [a for a in plan.actions if a.action_key not in promised_keys]
+    plan = replace(plan, actions=promised + fresh)
+
     _write(out / "findings.json",
            json.dumps(findings_to_dicts(findings), ensure_ascii=False, indent=2) + "\n")
     _write(out / "report.md", render_report_md(diff, len(findings), prev_findings))
@@ -115,7 +132,10 @@ def cmd_run(args: argparse.Namespace) -> int:
     print(f"Прогон {args.run_id}")
     print(f"Элементов: {len(items)}")
     print(f"Находок: {len(findings)}, подавлено: {suppressed_total}")
+    promised_count = sum(1 for a in plan.actions if a.promised_from is not None)
     print(f"Действий в плане: {len(plan.actions)}, отложено: {len(plan.deferred)}")
+    if promised_count:
+        print(f"Из них обещано ранее и не исполнено: {promised_count}")
     print(f"Пропущено правил-суждений: {len(result.skipped_rules)} "
           f"({', '.join(result.skipped_rules)})")
     print("Утверждено: 0" if args.shadow else "Апрув: отметьте действия в plan.md")

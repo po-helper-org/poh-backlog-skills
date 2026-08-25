@@ -4,8 +4,9 @@ from dataclasses import replace
 
 from poh_backlog.catalog import load_catalog
 from poh_backlog.model import BacklogItem, Finding
-from poh_backlog.planner import (ALLOWED_OPS, build_plan, plan_to_dict,
-                                 read_run_id, render_plan_md, trace_label)
+from poh_backlog.planner import (ALLOWED_OPS, Plan, build_plan, plan_to_dict,
+                                 promised_actions, read_run_id, render_plan_md,
+                                 trace_label)
 
 CATALOG = load_catalog(Path(__file__).parent.parent / "poh_backlog" / "data" / "catalog.yaml")
 
@@ -170,3 +171,42 @@ def test_plan_to_dict_includes_new_fields():
     entry = plan_to_dict(plan)["actions"][0]
     assert entry["trace_label"] == "poh:HYG-STALE-001"
     assert entry["promised_from"] is None
+
+
+VERDICTS = [
+    {"action_key": "x" * 16, "rule_id": "HYG-EST-003", "item_id": "S-1",
+     "op": "update_field", "status": "not_applied", "note": "нет следа"},
+    {"action_key": "y" * 16, "rule_id": "HYG-DESC-002", "item_id": "S-2",
+     "op": "update_field", "status": "no_effect", "note": "эффекта нет"},
+    {"action_key": "z" * 16, "rule_id": "HYG-ORPHAN-004", "item_id": "S-3",
+     "op": "relink", "status": "done", "note": "сработало"},
+]
+
+
+def test_promised_actions_skips_done():
+    items = {f"S-{i}": item(f"S-{i}") for i in (1, 2, 3)}
+    result = promised_actions(VERDICTS, CATALOG, items, run_id="2026-08-25-01")
+    assert [a.item_id for a in result] == ["S-1", "S-2"]
+
+
+def test_promised_actions_carry_source_run():
+    items = {f"S-{i}": item(f"S-{i}") for i in (1, 2, 3)}
+    result = promised_actions(VERDICTS, CATALOG, items, run_id="2026-08-25-01")
+    assert all(a.promised_from == "2026-08-25-01" for a in result)
+
+
+def test_promised_actions_recompute_key_from_current_item():
+    items = {"S-1": item("S-1", updated="2026-09-01T00:00:00+00:00"),
+             "S-2": item("S-2"), "S-3": item("S-3")}
+    result = promised_actions(VERDICTS, CATALOG, items, run_id="2026-08-25-01")
+    assert result[0].action_key != "x" * 16
+
+
+def test_plan_md_renders_promised_section_with_checkboxes():
+    items = {f"S-{i}": item(f"S-{i}") for i in (1, 2, 3)}
+    promised = promised_actions(VERDICTS, CATALOG, items, run_id="2026-08-25-01")
+    plan = Plan(actions=promised, deferred=[])
+    text = render_plan_md(plan, run_id="2026-08-26-01")
+    assert "Обещано, не сделано" in text
+    assert "2026-08-25-01" in text
+    assert text.count("- [ ] ") == 2
