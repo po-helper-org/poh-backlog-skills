@@ -109,6 +109,35 @@ def load_latest_findings_count(root: Path) -> int:
     return len(payload)
 
 
+def write_verdicts(root: Path, run_id: str, verdicts: list[dict],
+                   applied: list[str]) -> Path:
+    """Дописывает в каталог прогона результат проверки исполнения.
+
+    applied.json наполняется ключами утверждённых действий, доехавших до
+    вердикта done: файл становится журналом фактически выполненного, а не
+    пустой заготовкой.
+    """
+    state_dir = Path(root) / run_id
+    state_dir.mkdir(parents=True, exist_ok=True)
+    _dump_json(state_dir / "verdicts.json", verdicts)
+    _dump_json(state_dir / "applied.json", applied)
+    return state_dir
+
+
+def load_latest_verdicts(root: Path) -> tuple[str | None, list[dict]]:
+    """Вердикты последнего прогона, где проверка вообще выполнялась.
+
+    Возвращает пару: идентификатор того прогона и сами вердикты. Идентификатор
+    нужен плану следующего прогона, чтобы честно написать, где именно действие
+    утверждали. Прогонов без verdicts.json функция не замечает.
+    """
+    loaded = _load_latest_json(root, "verdicts.json")
+    if loaded is None:
+        return None, []
+    path, verdicts = loaded
+    return path.parent.name, verdicts
+
+
 def backlog_create_argv(run_id: str, state_dir: Path) -> list[str]:
     argv = [
         "backlog", "task", "create", f"Гигиена беклога, прогон {run_id}",
